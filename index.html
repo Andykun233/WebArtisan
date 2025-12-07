@@ -2,7 +2,7 @@
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
     <title>WebArtisan 烘焙大师</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Roboto:wght@300;400;500;700&display=swap" rel="stylesheet">
@@ -12,6 +12,7 @@
         background-color: #1c1c1c; /* Artisan Dark Grey */
         color: #e0e0e0;
         overflow: hidden; /* App-like feel */
+        touch-action: manipulation; /* Improves touch response */
       }
       .font-mono {
         font-family: 'JetBrains Mono', monospace;
@@ -30,6 +31,14 @@
       }
       ::-webkit-scrollbar-thumb:hover {
         background: #555; 
+      }
+      /* Hide scrollbar for stats on mobile but keep functionality */
+      .no-scrollbar::-webkit-scrollbar {
+        display: none;
+      }
+      .no-scrollbar {
+        -ms-overflow-style: none;
+        scrollbar-width: none;
       }
     </style>
   <script type="importmap">

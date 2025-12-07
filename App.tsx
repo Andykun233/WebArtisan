@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Play, Square, Bluetooth, Thermometer, Clock, AlertCircle, Sparkles, Terminal, RotateCcw } from 'lucide-react';
+import { Play, Square, Bluetooth, Thermometer, Clock, AlertCircle, Sparkles, Terminal, RotateCcw, Activity } from 'lucide-react';
 import RoastChart from './components/RoastChart';
 import StatCard from './components/StatCard';
 import { TC4BluetoothService } from './services/bluetoothService';
@@ -7,6 +7,30 @@ import { DataPoint, RoastStatus, RoastEvent } from './types';
 import { analyzeRoast } from './services/geminiService';
 
 const bluetoothService = new TC4BluetoothService();
+
+// --- Utility: Linear Regression for Slope Calculation ---
+// Returns slope (rate of change per unit time)
+function calculateSlope(data: {time: number, value: number}[]): number {
+  const n = data.length;
+  if (n < 2) return 0;
+
+  let sumX = 0;
+  let sumY = 0;
+  let sumXY = 0;
+  let sumXX = 0;
+
+  for (const point of data) {
+    sumX += point.time;
+    sumY += point.value;
+    sumXY += point.time * point.value;
+    sumXX += point.time * point.time;
+  }
+
+  const denominator = (n * sumXX - sumX * sumX);
+  if (denominator === 0) return 0;
+
+  return (n * sumXY - sumX * sumY) / denominator;
+}
 
 const App: React.FC = () => {
   const [status, setStatus] = useState<RoastStatus>(RoastStatus.IDLE);
@@ -117,28 +141,59 @@ const App: React.FC = () => {
       const currentBTVal = btRef.current;
       const currentETVal = etRef.current;
 
-      // RoR Calculation (30s window)
-      const lookbackSeconds = 30;
+      // --- Advanced RoR Calculation ---
+      // 1. Configuration
+      const LOOKBACK_WINDOW = 45; // Increased to 45s for stability (Artisan style)
+      const EWMA_ALPHA = 0.25;    // Smoothing factor (0.1 = very smooth/laggy, 1.0 = raw)
+      
+      // 2. Prepare Data for Regression
+      // Filter history points within the lookback window
+      const historyPoints = dataRef.current
+        .filter(d => d.time > currentTime - LOOKBACK_WINDOW)
+        .map(d => ({ time: d.time, value: d.bt }));
+      
+      // Include current point
+      const regressionPoints = [...historyPoints, { time: currentTime, value: currentBTVal }];
+
       let calculatedRoR = 0;
       
-      const lookbackPoint = dataRef.current.find(d => d.time >= currentTime - lookbackSeconds);
-      if (lookbackPoint) {
-        const deltaTemp = currentBTVal - lookbackPoint.bt;
-        const deltaTime = (currentTime - lookbackPoint.time) / 60; // minutes
-        if (deltaTime > 0.1) {
-            calculatedRoR = deltaTemp / deltaTime;
-        }
+      // Only calculate if we have enough data duration (> 10 seconds) to avoid initial noise
+      if (regressionPoints.length >= 5 && (regressionPoints[regressionPoints.length - 1].time - regressionPoints[0].time > 10)) {
+         // Calculate Slope via Linear Regression (deg/sec)
+         const slope = calculateSlope(regressionPoints);
+         // Convert to deg/min
+         calculatedRoR = slope * 60;
       }
+
+      // 3. Apply EWMA Smoothing (Exponential Weighted Moving Average)
+      // Get previous RoR (from last recorded data point)
+      const previousRoR = dataRef.current.length > 0 ? dataRef.current[dataRef.current.length - 1].ror : 0;
       
-      // Update RoR UI
-      setCurrentRoR(parseFloat(calculatedRoR.toFixed(1)));
+      let smoothedRoR = calculatedRoR;
+      
+      // Apply smoothing only if we have a history stream established
+      if (dataRef.current.length > 10) {
+          smoothedRoR = (EWMA_ALPHA * calculatedRoR) + ((1 - EWMA_ALPHA) * previousRoR);
+      }
+
+      // Cap extreme values/noise
+      if (Math.abs(smoothedRoR) < 0.1) smoothedRoR = 0;
+      // Also clamp unlikely values to prevent chart explosion
+      if (smoothedRoR > 100) smoothedRoR = 100;
+      if (smoothedRoR < -50) smoothedRoR = -50;
+      
+      // Round for display/storage
+      smoothedRoR = parseFloat(smoothedRoR.toFixed(1));
+
+      // Update UI
+      setCurrentRoR(smoothedRoR);
 
       // Create new DataPoint
       const newDataPoint: DataPoint = { 
         time: currentTime, 
         bt: currentBTVal, 
         et: currentETVal, 
-        ror: calculatedRoR 
+        ror: smoothedRoR 
       };
 
       // Update Ref
@@ -213,10 +268,6 @@ const App: React.FC = () => {
   const hasEvent = (label: string) => events.some(e => e.label === label);
 
   // Define event buttons config
-  // Logic: 
-  // 1. Buttons can be toggled (Undo/Redo).
-  // 2. Strict prerequisites for ENABLING the button, but loosely coupled for unchecking.
-  // 3. Visuals: Outlined = Available, Filled = Active/Done.
   const eventButtons = [
     { 
         label: "入豆", // Charge
@@ -271,49 +322,61 @@ const App: React.FC = () => {
   return (
     <div className="h-screen w-full flex flex-col bg-[#1c1c1c] text-[#e0e0e0]">
       
-      {/* 1. TOP TOOLBAR */}
-      <div className="h-14 bg-[#2a2a2a] border-b border-[#333] flex items-center justify-between px-4 shadow-md z-10">
-         <div className="flex items-center gap-4">
-            <span className="font-bold text-xl tracking-tighter text-gray-300 flex items-center gap-2">
-                <Thermometer className="text-orange-500" />
-                WEB<span className="text-orange-500">ARTISAN</span>
+      {/* 1. TOP TOOLBAR - Mobile Compact */}
+      <div className="h-12 md:h-14 bg-[#2a2a2a] border-b border-[#333] flex items-center justify-between px-3 md:px-4 shadow-md z-10 shrink-0">
+         <div className="flex items-center gap-2 md:gap-4">
+            <span className="font-bold text-lg md:text-xl tracking-tighter text-gray-300 flex items-center gap-1.5">
+                <Thermometer className="text-orange-500 w-4 h-4 md:w-6 md:h-6" />
+                <span className="hidden xs:inline">WEB</span><span className="text-orange-500">ARTISAN</span>
             </span>
-            <div className="h-6 w-px bg-[#444] mx-2"></div>
+            <div className="h-4 md:h-6 w-px bg-[#444] mx-1 md:mx-2 hidden md:block"></div>
             
             {/* Connection Status */}
-            <div className="flex items-center gap-2 text-xs font-mono uppercase">
-               <span className={`w-3 h-3 rounded-full ${status !== RoastStatus.IDLE ? 'bg-[#39ff14] shadow-[0_0_8px_#39ff14]' : 'bg-red-500'}`}></span>
-               {status === RoastStatus.IDLE ? '未连接' : '设备在线'}
+            <div className="flex items-center gap-1.5 text-[10px] md:text-xs font-mono uppercase">
+               <span className={`w-2 h-2 md:w-3 md:h-3 rounded-full ${status !== RoastStatus.IDLE ? 'bg-[#39ff14] shadow-[0_0_8px_#39ff14]' : 'bg-red-500'}`}></span>
+               <span className="hidden sm:inline">{status === RoastStatus.IDLE ? '未连接' : '设备在线'}</span>
             </div>
          </div>
 
-         <div className="flex gap-2">
+         <div className="flex gap-2 items-center">
+            {/* AI Analysis Button - Visible on Mobile if Roasting/Finished */}
+            {(status === RoastStatus.FINISHED || status === RoastStatus.ROASTING) && (
+               <button 
+                  onClick={handleGeminiAnalysis}
+                  disabled={isAnalyzing || data.length < 10}
+                  className="p-1.5 md:px-3 md:py-1.5 bg-indigo-900/50 hover:bg-indigo-900 border border-indigo-700 text-indigo-200 rounded flex items-center justify-center gap-1 md:gap-2 disabled:opacity-50"
+                  title="AI 分析"
+              >
+                  <Sparkles size={16} /> <span className="hidden md:inline">{isAnalyzing ? '分析中...' : 'AI 分析'}</span>
+              </button>
+            )}
+
             {status === RoastStatus.IDLE && (
                  <>
-                 <button onClick={toggleSimulation} className="px-3 py-1 bg-[#333] hover:bg-[#444] border border-[#555] rounded text-xs text-gray-300 font-mono">
-                   {isSimulating ? '停止模拟' : '模拟模式'}
+                 <button onClick={toggleSimulation} className="px-2 py-1 bg-[#333] hover:bg-[#444] border border-[#555] rounded text-[10px] md:text-xs text-gray-300 font-mono">
+                   {isSimulating ? '停止' : '模拟'}
                  </button>
-                 <button onClick={handleBluetoothConnect} className="px-4 py-1.5 bg-[#005fb8] hover:bg-[#0070d8] text-white rounded font-bold text-sm flex items-center gap-2 border border-blue-400/20">
-                    <Bluetooth size={16} /> 连接设备
+                 <button onClick={handleBluetoothConnect} className="px-3 py-1.5 bg-[#005fb8] hover:bg-[#0070d8] text-white rounded font-bold text-xs md:text-sm flex items-center gap-1 border border-blue-400/20">
+                    <Bluetooth size={14} className="md:w-4 md:h-4" /> <span className="inline">连接</span>
                 </button>
                 </>
             )}
 
             {status === RoastStatus.CONNECTED && (
-                 <button onClick={handleStartRoast} className="px-6 py-1.5 bg-[#2da44e] hover:bg-[#2c974b] text-white rounded font-bold text-sm flex items-center gap-2 border border-green-400/20 shadow-[0_0_10px_rgba(45,164,78,0.4)]">
-                   <Play size={16} /> 开始烘焙
+                 <button onClick={handleStartRoast} className="px-4 py-1.5 bg-[#2da44e] hover:bg-[#2c974b] text-white rounded font-bold text-xs md:text-sm flex items-center gap-1 border border-green-400/20 shadow-[0_0_10px_rgba(45,164,78,0.4)]">
+                   <Play size={14} className="md:w-4 md:h-4" /> 开始
                </button>
             )}
 
             {status === RoastStatus.ROASTING && (
-                 <button onClick={handleStopRoast} className="px-6 py-1.5 bg-[#cf222e] hover:bg-[#a40e26] text-white rounded font-bold text-sm flex items-center gap-2 border border-red-400/20 shadow-[0_0_10px_rgba(207,34,46,0.4)]">
-                   <Square size={16} /> 下豆 (Drop)
+                 <button onClick={handleStopRoast} className="px-4 py-1.5 bg-[#cf222e] hover:bg-[#a40e26] text-white rounded font-bold text-xs md:text-sm flex items-center gap-1 border border-red-400/20 shadow-[0_0_10px_rgba(207,34,46,0.4)]">
+                   <Square size={14} className="md:w-4 md:h-4" /> 下豆
                </button>
             )}
 
             {status === RoastStatus.FINISHED && (
-                 <button onClick={handleReset} className="px-4 py-1.5 bg-[#333] hover:bg-[#444] text-white rounded font-bold text-sm flex items-center gap-2 border border-[#555]">
-                   <RotateCcw size={16} /> 重置
+                 <button onClick={handleReset} className="px-3 py-1.5 bg-[#333] hover:bg-[#444] text-white rounded font-bold text-xs md:text-sm flex items-center gap-1 border border-[#555]">
+                   <RotateCcw size={14} className="md:w-4 md:h-4" /> 重置
                </button>
             )}
         </div>
@@ -321,101 +384,115 @@ const App: React.FC = () => {
 
       {/* ERROR MESSAGE */}
       {errorMsg && (
-        <div className="bg-red-900/80 text-white px-4 py-2 text-sm flex items-center gap-2 border-b border-red-500">
-            <AlertCircle size={16} /> {errorMsg}
+        <div className="bg-red-900/80 text-white px-4 py-2 text-xs md:text-sm flex items-center gap-2 border-b border-red-500">
+            <AlertCircle size={14} /> {errorMsg}
         </div>
       )}
 
       {/* 2. MAIN WORKSPACE */}
-      <div className="flex-1 flex overflow-hidden">
+      <div className="flex-1 flex flex-col md:flex-row overflow-hidden relative">
         
         {/* LEFT COLUMN: LCD Displays */}
-        <div className="w-64 bg-[#222] border-r border-[#333] p-3 flex flex-col gap-1 overflow-y-auto">
-            <div className="mb-2 pb-2 border-b border-[#333] text-xs font-bold text-gray-500 uppercase tracking-widest">实时温度</div>
-            <StatCard label="Bean Temp 豆温" value={currentBT.toFixed(1)} unit="°C" color="red" />
-            <StatCard label="Env Temp 炉温" value={currentET.toFixed(1)} unit="°C" color="blue" />
+        {/* Mobile: Top Bar, scrollable | Desktop: Left Sidebar */}
+        <div className="
+            w-full md:w-64 bg-[#222] border-b md:border-b-0 md:border-r border-[#333] p-1.5 md:p-3 
+            flex flex-row md:flex-col gap-1.5 md:gap-2 overflow-x-auto md:overflow-y-auto shrink-0 no-scrollbar
+        ">
+            <div className="hidden md:block mb-2 pb-2 border-b border-[#333] text-xs font-bold text-gray-500 uppercase tracking-widest">实时温度</div>
             
-            <div className="my-2 pb-2 border-b border-[#333] text-xs font-bold text-gray-500 uppercase tracking-widest">温升率 (RoR)</div>
-            <StatCard label="BT RoR" value={currentRoR.toFixed(1)} unit="°C/min" color="yellow" />
+            {/* Mobile: use min-w to force scrolling if needed, but try to fit */}
+            <div className="min-w-[30%] md:min-w-0 flex-1">
+                <StatCard label="Bean Temp" value={currentBT.toFixed(1)} unit="°C" color="red" />
+            </div>
+            <div className="min-w-[30%] md:min-w-0 flex-1">
+                <StatCard label="Env Temp" value={currentET.toFixed(1)} unit="°C" color="blue" />
+            </div>
             
-            <div className="my-2 pb-2 border-b border-[#333] text-xs font-bold text-gray-500 uppercase tracking-widest">烘焙进程</div>
-            <StatCard label="烘焙时间" value={getDuration()} color="green" />
-
-             {/* AI Panel Small */}
-             {(status === RoastStatus.FINISHED || status === RoastStatus.ROASTING) && (
-                <div className="mt-auto pt-4 border-t border-[#333]">
-                     <button 
-                        onClick={handleGeminiAnalysis}
-                        disabled={isAnalyzing || data.length < 10}
-                        className="w-full py-2 bg-indigo-900/50 hover:bg-indigo-900 border border-indigo-700 text-indigo-200 text-xs font-bold rounded flex items-center justify-center gap-2 disabled:opacity-50"
-                    >
-                        <Sparkles size={14} /> {isAnalyzing ? '分析中...' : 'AI 智能分析'}
-                    </button>
-                </div>
-            )}
+            <div className="hidden md:block my-2 pb-2 border-b border-[#333] text-xs font-bold text-gray-500 uppercase tracking-widest">温升率</div>
+            <div className="min-w-[25%] md:min-w-0 flex-1">
+                <StatCard label="BT RoR" value={currentRoR.toFixed(1)} unit="°/min" color="yellow" />
+            </div>
+            
+            <div className="hidden md:block my-2 pb-2 border-b border-[#333] text-xs font-bold text-gray-500 uppercase tracking-widest">时间</div>
+            <div className="min-w-[20%] md:min-w-0 flex-1">
+                <StatCard label="TIME" value={getDuration()} color="green" />
+            </div>
         </div>
 
         {/* CENTER COLUMN: Chart */}
-        <div className="flex-1 bg-[#1a1a1a] p-1 flex flex-col relative">
-            <RoastChart 
-                data={data} 
-                events={events} 
-                currentBT={currentBT}
-                currentET={currentET}
-                currentRoR={currentRoR}
-            />
+        <div className="flex-1 bg-[#1a1a1a] flex flex-col relative min-h-0">
+            <div className="flex-1 p-1 pb-0">
+                <RoastChart 
+                    data={data} 
+                    events={events} 
+                    currentBT={currentBT}
+                    currentET={currentET}
+                    currentRoR={currentRoR}
+                />
+            </div>
             
             {/* Analysis Overlay */}
             {analysisResult && (
-                <div className="absolute bottom-4 left-4 right-4 bg-[#222]/95 border border-[#444] rounded shadow-2xl p-4 max-h-[30vh] overflow-y-auto z-20 backdrop-blur-sm">
-                    <div className="flex justify-between items-center mb-2 border-b border-[#444] pb-2">
-                        <h4 className="text-indigo-400 font-bold flex items-center gap-2"><Sparkles size={16}/> 烘焙分析报告</h4>
-                        <button onClick={() => setAnalysisResult(null)} className="text-gray-500 hover:text-white">✕</button>
+                <div className="absolute inset-x-4 bottom-4 md:inset-auto md:top-4 md:right-4 md:w-96 bg-[#222]/95 border border-[#444] rounded shadow-2xl flex flex-col max-h-[50vh] z-30 backdrop-blur-md">
+                    <div className="flex justify-between items-center p-3 border-b border-[#444]">
+                        <h4 className="text-indigo-400 font-bold flex items-center gap-2 text-sm"><Sparkles size={14}/> 烘焙分析报告</h4>
+                        <button onClick={() => setAnalysisResult(null)} className="text-gray-400 hover:text-white p-1">✕</button>
                     </div>
-                    <pre className="font-sans text-sm text-gray-300 whitespace-pre-wrap leading-relaxed">
-                        {analysisResult}
-                    </pre>
+                    <div className="p-3 overflow-y-auto">
+                        <pre className="font-sans text-xs md:text-sm text-gray-300 whitespace-pre-wrap leading-relaxed">
+                            {analysisResult}
+                        </pre>
+                    </div>
                 </div>
             )}
         </div>
 
         {/* RIGHT COLUMN: Controls & Events */}
-        <div className="w-48 bg-[#222] border-l border-[#333] p-2 flex flex-col gap-2">
-             <div className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-1 text-center">事件标记</div>
-             {eventButtons.map((btn, idx) => {
-                 const isActive = hasEvent(btn.label);
-                 
-                 return (
-                    <button
-                        key={idx}
-                        onClick={btn.action}
-                        disabled={status !== RoastStatus.ROASTING || btn.disabled}
-                        className={`
-                            w-full py-3 font-bold text-xs rounded-sm transition-all border
-                            ${status !== RoastStatus.ROASTING || btn.disabled 
-                                ? 'bg-[#2a2a2a] text-gray-600 border-transparent cursor-not-allowed' 
-                                : isActive 
-                                    ? `${btn.bgClass} text-white border-transparent shadow-[inset_0_2px_4px_rgba(0,0,0,0.3)]` // Active State
-                                    : `bg-transparent ${btn.borderClass} hover:bg-white/5` // Available State
-                            }
-                        `}
-                    >
-                        {btn.label}
-                    </button>
-                 );
-             })}
+        {/* Mobile: Bottom Grid | Desktop: Right Sidebar */}
+        <div className="
+            w-full md:w-48 bg-[#222] border-t md:border-t-0 md:border-l border-[#333] p-2 
+            flex flex-col md:flex-col gap-2 shrink-0 
+            pb-safe md:pb-2
+        ">
+             <div className="hidden md:block text-xs font-bold text-gray-500 uppercase tracking-widest mb-1 text-center">事件标记</div>
+             
+             {/* Mobile: Grid Layout for Buttons */}
+             {/* Using grid-cols-3 is good, but let's make them slightly shorter vertically on mobile to save space */}
+             <div className="grid grid-cols-3 md:flex md:flex-col gap-2 mb-safe-offset">
+                 {eventButtons.map((btn, idx) => {
+                     const isActive = hasEvent(btn.label);
+                     
+                     return (
+                        <button
+                            key={idx}
+                            onClick={btn.action}
+                            disabled={status !== RoastStatus.ROASTING || btn.disabled}
+                            className={`
+                                w-full py-2.5 md:py-3 font-bold text-[11px] md:text-xs rounded-sm transition-all border select-none active:scale-95
+                                ${status !== RoastStatus.ROASTING || btn.disabled 
+                                    ? 'bg-[#2a2a2a] text-gray-600 border-transparent' 
+                                    : isActive 
+                                        ? `${btn.bgClass} text-white border-transparent shadow-inner` // Active State
+                                        : `bg-transparent ${btn.borderClass} hover:bg-white/5 active:bg-white/10` // Available State
+                                }
+                            `}
+                        >
+                            {btn.label}
+                        </button>
+                     );
+                 })}
+             </div>
 
-             <div className="mt-auto border-t border-[#333] pt-2">
+             <div className="mt-auto border-t border-[#333] pt-2 hidden md:block">
                  <div className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-2 flex items-center gap-1">
                     <Terminal size={12}/> 事件日志
                  </div>
-                 <div className="h-48 bg-black border border-[#333] p-2 overflow-y-auto font-mono text-[10px] text-green-500/80 rounded-sm">
+                 <div className="h-48 bg-black border border-[#333] p-2 overflow-y-auto font-mono text-[10px] text-green-500/80 rounded-sm custom-scrollbar">
                     {events.length === 0 && <span className="opacity-50">等待事件...</span>}
                     {events.map((e, i) => (
                         <div key={i} className="mb-1 border-b border-[#222] pb-1 last:border-0">
                             <span className="text-gray-500">[{formatTime(e.time * 1000)}]</span>
                             <span className="text-white ml-1">{e.label}</span>
-                            <span className="text-gray-400 ml-1">@ {e.temp.toFixed(1)}°</span>
                         </div>
                     )).reverse()}
                  </div>
