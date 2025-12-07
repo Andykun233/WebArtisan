@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Play, Square, Bluetooth, Thermometer, Clock, AlertCircle, Terminal, RotateCcw, Activity, Loader2, Signal } from 'lucide-react';
+import { Play, Square, Bluetooth, Thermometer, Clock, AlertCircle, Terminal, RotateCcw, Activity, Loader2, Signal, Undo2, X } from 'lucide-react';
 import RoastChart from './components/RoastChart';
 import StatCard from './components/StatCard';
 import { TC4BluetoothService } from './services/bluetoothService';
@@ -56,6 +56,10 @@ const App: React.FC = () => {
   const [isSimulating, setIsSimulating] = useState(false);
   const simulationIntervalRef = useRef<number | null>(null);
 
+  // Undo Drop State
+  const [showUndoDrop, setShowUndoDrop] = useState(false);
+  const undoTimerRef = useRef<number | null>(null);
+
   // Handlers
   const handleBluetoothConnect = async () => {
     setIsConnecting(true);
@@ -107,9 +111,45 @@ const App: React.FC = () => {
   const handleStopRoast = () => {
     setStatus(RoastStatus.FINISHED);
     handleEvent("下豆"); // Drop is a one-time final event
+
+    // Trigger Undo UI
+    setShowUndoDrop(true);
+    
+    // Auto hide undo after 5 seconds
+    if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
+    undoTimerRef.current = window.setTimeout(() => {
+        setShowUndoDrop(false);
+    }, 5000);
+  };
+
+  const handleUndoDrop = () => {
+    // 1. Clear timeout
+    if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
+    
+    // 2. Hide UI
+    setShowUndoDrop(false);
+
+    // 3. Revert Status (Resume Roasting)
+    // The useEffect dependent on [status] will pick up where it left off
+    setStatus(RoastStatus.ROASTING);
+
+    // 4. Remove the "下豆" event
+    setEvents(prev => {
+        // Filter out the last event if it is "下豆"
+        // Or strictly filter by label, but strictly speaking we just want to undo the last action
+        const newEvents = [...prev];
+        if (newEvents.length > 0 && newEvents[newEvents.length - 1].label === "下豆") {
+            newEvents.pop();
+        }
+        return newEvents;
+    });
   };
 
   const handleReset = () => {
+    // Clear any pending undo
+    setShowUndoDrop(false);
+    if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
+
     setStatus(RoastStatus.CONNECTED);
     setData([]);
     dataRef.current = [];
@@ -419,6 +459,31 @@ const App: React.FC = () => {
       {/* 2. MAIN WORKSPACE */}
       <div className="flex-1 flex flex-col md:flex-row overflow-hidden relative">
         
+        {/* Undo Drop Toast */}
+        {showUndoDrop && (
+            <div className="absolute top-4 left-1/2 -translate-x-1/2 z-50 animate-in slide-in-from-top-4 fade-in duration-300">
+                <div className="bg-[#222] border border-[#cf222e] rounded-md shadow-2xl p-3 flex items-center gap-3">
+                    <div className="flex flex-col">
+                        <span className="text-white font-bold text-sm">已下豆 (Roast Finished)</span>
+                        <span className="text-gray-400 text-xs">烘焙已完成。误操作？</span>
+                    </div>
+                    <div className="h-6 w-px bg-gray-600"></div>
+                    <button 
+                        onClick={handleUndoDrop}
+                        className="flex items-center gap-1 px-3 py-1.5 bg-[#cf222e] hover:bg-[#a40e26] text-white text-xs font-bold rounded transition-colors"
+                    >
+                        <Undo2 size={14} /> 撤销
+                    </button>
+                    <button 
+                        onClick={() => setShowUndoDrop(false)}
+                        className="text-gray-500 hover:text-gray-300"
+                    >
+                        <X size={16} />
+                    </button>
+                </div>
+            </div>
+        )}
+
         {/* DESKTOP LEFT SIDEBAR: Large LCD Displays - HIDDEN ON MOBILE */}
         <div className="
             hidden md:flex w-64 bg-[#222] border-r border-[#333] p-3 
