@@ -1,0 +1,5 @@
+{
+  "name": "WebArtisan Roaster",
+  "description": "A professional coffee roasting dashboard utilizing the TC4 protocol via Web Bluetooth. Features real-time charting, Rate of Rise (RoR) calculation, and AI-powered roast profile analysis.",
+  "requestFramePermissions": []
+}
