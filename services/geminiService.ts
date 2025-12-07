@@ -7,25 +7,25 @@ import { DataPoint } from "../types";
 
 export const analyzeRoast = async (data: DataPoint[]): Promise<string> => {
   if (!process.env.API_KEY) {
-      return "Error: API Key is missing. Please ensure process.env.API_KEY is set.";
+      return "错误: 缺少 API Key。请确保 process.env.API_KEY 已设置。";
   }
 
   // Downsample data to avoid token limits if the roast is long
   const sampledData = data.filter((_, index) => index % 10 === 0); 
   
   const prompt = `
-    You are a world-class coffee roasting expert (Q Grader).
-    Analyze the following roast profile data (JSON format).
-    The data contains Time (seconds), BT (Bean Temp Celsius), ET (Environment Temp), and RoR (Rate of Rise).
+    你是一位世界级的咖啡烘焙专家（Q Grader）。
+    请分析以下烘焙曲线数据（JSON 格式）。
+    数据包含 Time (秒), BT (豆温), ET (炉温), 和 RoR (温升率)。
     
-    Data:
+    数据:
     ${JSON.stringify(sampledData)}
 
-    Please provide a concise analysis:
-    1. Identify the Drying Phase, Maillard Phase, and Development Time if possible.
-    2. Check for "RoR Crash" or "Flick".
-    3. Evaluate the development ratio.
-    4. Give a final score out of 10 and 1 suggestion for improvement.
+    请提供一份简明的分析报告（请务必使用中文回答）：
+    1. 识别脱水期 (Drying Phase)、梅纳反应期 (Maillard Phase) 和发展时间 (Development Time)。
+    2. 检查是否有 "RoR Crash" (失温) 或 "Flick" (回升) 现象。
+    3. 评估发展率 (Development Ratio)。
+    4. 给出 10 分制的最终评分，并提供 1 条改进建议。
   `;
 
   try {
@@ -34,9 +34,9 @@ export const analyzeRoast = async (data: DataPoint[]): Promise<string> => {
       model: 'gemini-2.5-flash',
       contents: prompt,
     });
-    return response.text || "No analysis generated.";
+    return response.text || "未生成分析结果。";
   } catch (error) {
     console.error("Gemini Analysis Error:", error);
-    return "Failed to analyze roast profile. Please check your connection and API limits.";
+    return "分析失败。请检查网络连接或 API 配额。";
   }
 };

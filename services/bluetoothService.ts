@@ -57,11 +57,17 @@ export class TC4BluetoothService {
   private textDecoder = new TextDecoder();
   private textEncoder = new TextEncoder();
   private buffer = "";
+  private pollingInterval: number | null = null;
 
   constructor() {}
 
   async connect(onData: (bt: number, et: number) => void): Promise<void> {
     this.onDataCallback = onData;
+
+    // Check for browser support
+    if (!navigator.bluetooth) {
+      throw new Error("当前浏览器不支持 Web Bluetooth。请使用 Chrome, Edge 或 Bluefy (iOS)。");
+    }
 
     try {
       console.log('Requesting Bluetooth Device...');
@@ -71,7 +77,7 @@ export class TC4BluetoothService {
       });
 
       if (!this.device || !this.device.gatt) {
-        throw new Error('Device not found or GATT not available');
+        throw new Error('未找到设备或 GATT 服务不可用');
       }
 
       this.device.addEventListener('gattserverdisconnected', this.onDisconnected);
@@ -95,14 +101,17 @@ export class TC4BluetoothService {
       this.startPolling();
 
     } catch (error) {
-      console.error('Argh! ' + error);
+      console.error('Connection failed:', error);
       throw error;
     }
   }
 
   private startPolling() {
+     if (this.pollingInterval) clearInterval(this.pollingInterval);
+     
      // Send READ command every second according to TC4 protocol
-     const pollInterval = setInterval(async () => {
+     // Cast to any to avoid window/NodeJS timer type conflicts
+     this.pollingInterval = setInterval(async () => {
         if (this.server?.connected && this.txChar) {
             try {
                 // TC4 protocol: "READ" followed by newline
@@ -111,9 +120,9 @@ export class TC4BluetoothService {
                 console.warn("Failed to write READ command", e);
             }
         } else {
-            clearInterval(pollInterval);
+            if (this.pollingInterval) clearInterval(this.pollingInterval);
         }
-     }, 1000);
+     }, 1000) as any;
   }
 
   private handleNotifications = (event: Event) => {
@@ -156,12 +165,22 @@ export class TC4BluetoothService {
 
   private onDisconnected = () => {
     console.log('Device disconnected');
-    // In a real app, trigger a state update in the UI
+    if (this.pollingInterval) clearInterval(this.pollingInterval);
+    // Note: The App component should handle the UI update based on error/timeout or manual check
   };
 
   disconnect() {
-    if (this.device && this.device.gatt?.connected) {
-      this.device.gatt.disconnect();
+    if (this.pollingInterval) clearInterval(this.pollingInterval);
+    
+    if (this.device) {
+        this.device.removeEventListener('gattserverdisconnected', this.onDisconnected);
+        if (this.device.gatt?.connected) {
+            this.device.gatt.disconnect();
+        }
+    }
+    
+    if (this.rxChar) {
+        this.rxChar.removeEventListener('characteristicvaluechanged', this.handleNotifications);
     }
   }
 }
