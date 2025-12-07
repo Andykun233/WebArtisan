@@ -1,5 +1,6 @@
+
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Play, Square, Bluetooth, Thermometer, Clock, AlertCircle, Terminal, RotateCcw, Activity, Loader2, Signal, Undo2, X } from 'lucide-react';
+import { Play, Square, Bluetooth, Thermometer, Clock, AlertCircle, Terminal, RotateCcw, Activity, Loader2, Signal, Undo2, X, Flame } from 'lucide-react';
 import RoastChart from './components/RoastChart';
 import StatCard from './components/StatCard';
 import { TC4BluetoothService } from './services/bluetoothService';
@@ -41,6 +42,7 @@ const App: React.FC = () => {
   const [currentBT, setCurrentBT] = useState<number>(20.0);
   const [currentET, setCurrentET] = useState<number>(20.0);
   const [currentRoR, setCurrentRoR] = useState<number>(0.0);
+  const [currentETRoR, setCurrentETRoR] = useState<number>(0.0);
 
   // Refs for stable access inside intervals without triggering re-renders
   const btRef = useRef(20.0);
@@ -83,7 +85,7 @@ const App: React.FC = () => {
         }
       );
       setDeviceName(name);
-      setStatus(RoastStatus.CONNECTED);
+      setStatus(RoastStatus.PREHEATING); // Go directly to Preheating after connection
     } catch (err: any) {
       setErrorMsg(err.message || "连接失败。请检查设备电源和配对状态。");
       console.error(err);
@@ -150,12 +152,17 @@ const App: React.FC = () => {
     setShowUndoDrop(false);
     if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
 
-    setStatus(RoastStatus.CONNECTED);
+    // If still connected (not IDLE), go to PREHEATING. If IDLE, stay IDLE.
+    if (status !== RoastStatus.IDLE) {
+        setStatus(RoastStatus.PREHEATING);
+    }
+    
     setData([]);
     dataRef.current = [];
     setEvents([]);
     setStartTime(null);
     setCurrentRoR(0);
+    setCurrentETRoR(0);
   };
 
   const handleEvent = (label: string) => {
@@ -194,54 +201,79 @@ const App: React.FC = () => {
       const LOOKBACK_WINDOW = 45; // Increased to 45s for stability (Artisan style)
       const EWMA_ALPHA = 0.25;    // Smoothing factor (0.1 = very smooth/laggy, 1.0 = raw)
       
-      // 2. Prepare Data for Regression
+      // 2. Prepare Data for Regression (BT)
       // Filter history points within the lookback window
-      const historyPoints = dataRef.current
+      const historyPointsBT = dataRef.current
         .filter(d => d.time > currentTime - LOOKBACK_WINDOW)
         .map(d => ({ time: d.time, value: d.bt }));
       
-      // Include current point
-      const regressionPoints = [...historyPoints, { time: currentTime, value: currentBTVal }];
+      const regressionPointsBT = [...historyPointsBT, { time: currentTime, value: currentBTVal }];
 
       let calculatedRoR = 0;
       
       // Only calculate if we have enough data duration (> 10 seconds) to avoid initial noise
-      if (regressionPoints.length >= 5 && (regressionPoints[regressionPoints.length - 1].time - regressionPoints[0].time > 10)) {
+      if (regressionPointsBT.length >= 5 && (regressionPointsBT[regressionPointsBT.length - 1].time - regressionPointsBT[0].time > 10)) {
          // Calculate Slope via Linear Regression (deg/sec)
-         const slope = calculateSlope(regressionPoints);
+         const slope = calculateSlope(regressionPointsBT);
          // Convert to deg/min
          calculatedRoR = slope * 60;
       }
 
-      // 3. Apply EWMA Smoothing (Exponential Weighted Moving Average)
-      // Get previous RoR (from last recorded data point)
-      const previousRoR = dataRef.current.length > 0 ? dataRef.current[dataRef.current.length - 1].ror : 0;
+      // --- ET RoR Calculation ---
+      // Prepare Data for Regression (ET)
+      const historyPointsET = dataRef.current
+        .filter(d => d.time > currentTime - LOOKBACK_WINDOW)
+        .map(d => ({ time: d.time, value: d.et }));
       
+      const regressionPointsET = [...historyPointsET, { time: currentTime, value: currentETVal }];
+
+      let calculatedETRoR = 0;
+      if (regressionPointsET.length >= 5 && (regressionPointsET[regressionPointsET.length - 1].time - regressionPointsET[0].time > 10)) {
+          const slope = calculateSlope(regressionPointsET);
+          calculatedETRoR = slope * 60;
+      }
+
+      // 3. Apply EWMA Smoothing (Exponential Weighted Moving Average)
+      // BT RoR Smoothing
+      const previousRoR = dataRef.current.length > 0 ? dataRef.current[dataRef.current.length - 1].ror : 0;
       let smoothedRoR = calculatedRoR;
       
-      // Apply smoothing only if we have a history stream established
       if (dataRef.current.length > 10) {
           smoothedRoR = (EWMA_ALPHA * calculatedRoR) + ((1 - EWMA_ALPHA) * previousRoR);
       }
 
-      // Cap extreme values/noise
+      // ET RoR Smoothing
+      const previousETRoR = dataRef.current.length > 0 ? (dataRef.current[dataRef.current.length - 1].et_ror || 0) : 0;
+      let smoothedETRoR = calculatedETRoR;
+      if (dataRef.current.length > 10) {
+          smoothedETRoR = (EWMA_ALPHA * calculatedETRoR) + ((1 - EWMA_ALPHA) * previousETRoR);
+      }
+
+      // Cap extreme values/noise for BT
       if (Math.abs(smoothedRoR) < 0.1) smoothedRoR = 0;
-      // Also clamp unlikely values to prevent chart explosion
       if (smoothedRoR > 100) smoothedRoR = 100;
       if (smoothedRoR < -50) smoothedRoR = -50;
       
+      // Cap extreme values/noise for ET
+      if (Math.abs(smoothedETRoR) < 0.1) smoothedETRoR = 0;
+      if (smoothedETRoR > 100) smoothedETRoR = 100;
+      if (smoothedETRoR < -50) smoothedETRoR = -50;
+
       // Round for display/storage
       smoothedRoR = parseFloat(smoothedRoR.toFixed(1));
+      smoothedETRoR = parseFloat(smoothedETRoR.toFixed(1));
 
       // Update UI
       setCurrentRoR(smoothedRoR);
+      setCurrentETRoR(smoothedETRoR);
 
       // Create new DataPoint
       const newDataPoint: DataPoint = { 
         time: currentTime, 
         bt: currentBTVal, 
         et: currentETVal, 
-        ror: smoothedRoR 
+        ror: smoothedRoR,
+        et_ror: smoothedETRoR
       };
 
       // Update Ref
@@ -264,7 +296,7 @@ const App: React.FC = () => {
         setDeviceName(null);
     } else {
         setIsSimulating(true);
-        setStatus(RoastStatus.CONNECTED);
+        setStatus(RoastStatus.PREHEATING); // Start in Preheating mode
         setDeviceName("模拟烘焙机 (Demo)");
         
         // Init physics vars
@@ -361,6 +393,21 @@ const App: React.FC = () => {
     },
   ];
 
+  // Logic for status color
+  const getStatusColor = () => {
+      if (isConnecting) return 'bg-yellow-500 animate-pulse';
+      if (status === RoastStatus.PREHEATING) return 'bg-orange-500 shadow-[0_0_8px_#f97316]'; // Orange for Preheating
+      if (status !== RoastStatus.IDLE) return 'bg-[#39ff14] shadow-[0_0_8px_#39ff14]'; // Green for Connected/Roasting
+      return 'bg-red-500';
+  };
+
+  const getStatusText = () => {
+      if (isConnecting) return '正在连接...';
+      if (status === RoastStatus.IDLE) return '未连接';
+      if (status === RoastStatus.PREHEATING) return '预热中';
+      return '设备在线';
+  };
+
   return (
     <div className="h-screen w-full flex flex-col bg-[#1c1c1c] text-[#e0e0e0]">
       
@@ -375,13 +422,9 @@ const App: React.FC = () => {
             
             {/* Connection Status Indicator */}
             <div className="group relative flex items-center gap-1.5 text-[10px] md:text-xs font-mono uppercase cursor-help py-2">
-               <span className={`w-2 h-2 md:w-3 md:h-3 rounded-full transition-colors duration-300 ${
-                    isConnecting ? 'bg-yellow-500 animate-pulse' :
-                    status !== RoastStatus.IDLE ? 'bg-[#39ff14] shadow-[0_0_8px_#39ff14]' : 'bg-red-500'
-               }`}></span>
+               <span className={`w-2 h-2 md:w-3 md:h-3 rounded-full transition-colors duration-300 ${getStatusColor()}`}></span>
                <span className="hidden sm:inline transition-colors group-hover:text-white">
-                  {isConnecting ? '正在连接...' : 
-                   status === RoastStatus.IDLE ? '未连接' : '设备在线'}
+                  {getStatusText()}
                </span>
                
                {/* Tooltip Popup */}
@@ -390,7 +433,7 @@ const App: React.FC = () => {
                   <div className="flex flex-col gap-1">
                       <div>
                         状态: <span className={status !== RoastStatus.IDLE ? 'text-green-400' : 'text-red-400'}>
-                             {isConnecting ? '初始化中...' : status === RoastStatus.IDLE ? '等待连接' : '已就绪'}
+                             {isConnecting ? '初始化中...' : status === RoastStatus.IDLE ? '等待连接' : status === RoastStatus.PREHEATING ? '正在预热' : '已就绪'}
                         </span>
                       </div>
                       {status !== RoastStatus.IDLE && (
@@ -429,7 +472,8 @@ const App: React.FC = () => {
                 </>
             )}
 
-            {status === RoastStatus.CONNECTED && (
+            {/* Show START button when Connected or Preheating */}
+            {(status === RoastStatus.CONNECTED || status === RoastStatus.PREHEATING) && (
                  <button onClick={handleStartRoast} className="px-4 py-1.5 bg-[#2da44e] hover:bg-[#2c974b] text-white rounded font-bold text-xs md:text-sm flex items-center gap-1 border border-green-400/20 shadow-[0_0_10px_rgba(45,164,78,0.4)]">
                    <Play size={14} className="md:w-4 md:h-4" /> 开始
                </button>
@@ -495,6 +539,7 @@ const App: React.FC = () => {
             
             <div className="my-2 pb-2 border-b border-[#333] text-xs font-bold text-gray-500 uppercase tracking-widest">温升率</div>
             <StatCard label="BT RoR" value={currentRoR.toFixed(1)} unit="°/min" color="yellow" />
+            <StatCard label="ET RoR" value={currentETRoR.toFixed(1)} unit="°/min" color="cyan" />
             
             <div className="my-2 pb-2 border-b border-[#333] text-xs font-bold text-gray-500 uppercase tracking-widest">时间</div>
             <StatCard label="TIME" value={getDuration()} color="green" />

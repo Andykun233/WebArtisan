@@ -4,7 +4,7 @@ interface StatCardProps {
   label: string;
   value: string | number;
   unit?: string;
-  color?: 'red' | 'blue' | 'yellow' | 'green' | 'slate';
+  color?: 'red' | 'blue' | 'yellow' | 'green' | 'slate' | 'cyan';
   subValue?: string;
 }
 
@@ -16,6 +16,7 @@ const StatCard: React.FC<StatCardProps> = ({ label, value, unit, color = 'slate'
     yellow: { text: 'text-[#ffd700]', border: 'border-[#ffd700]' }, // Delta/RoR
     green: { text: 'text-[#39ff14]', border: 'border-[#39ff14]' }, // Timer
     slate: { text: 'text-gray-300', border: 'border-gray-500' },
+    cyan: { text: 'text-cyan-400', border: 'border-cyan-400' }, // ET RoR
   };
 
   const activeColor = colors[color];
