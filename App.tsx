@@ -1,10 +1,9 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Play, Square, Bluetooth, Thermometer, Clock, AlertCircle, Sparkles, Terminal, RotateCcw, Activity, Loader2, Signal } from 'lucide-react';
+import { Play, Square, Bluetooth, Thermometer, Clock, AlertCircle, Terminal, RotateCcw, Activity, Loader2, Signal } from 'lucide-react';
 import RoastChart from './components/RoastChart';
 import StatCard from './components/StatCard';
 import { TC4BluetoothService } from './services/bluetoothService';
 import { DataPoint, RoastStatus, RoastEvent } from './types';
-import { analyzeRoast } from './services/geminiService';
 
 const bluetoothService = new TC4BluetoothService();
 
@@ -47,10 +46,6 @@ const App: React.FC = () => {
   const btRef = useRef(20.0);
   const etRef = useRef(20.0);
   const dataRef = useRef<DataPoint[]>([]);
-
-  // Analysis State
-  const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [analysisResult, setAnalysisResult] = useState<string | null>(null);
 
   // Connection State
   const [isConnecting, setIsConnecting] = useState(false);
@@ -102,7 +97,6 @@ const App: React.FC = () => {
     dataRef.current = [];
     
     setEvents([]);
-    setAnalysisResult(null);
     setStatus(RoastStatus.ROASTING);
     
     // Add START event manually since startTime state update is async
@@ -120,7 +114,6 @@ const App: React.FC = () => {
     setData([]);
     dataRef.current = [];
     setEvents([]);
-    setAnalysisResult(null);
     setStartTime(null);
     setCurrentRoR(0);
   };
@@ -260,14 +253,6 @@ const App: React.FC = () => {
     }
   };
 
-  const handleGeminiAnalysis = async () => {
-    if (data.length === 0) return;
-    setIsAnalyzing(true);
-    const result = await analyzeRoast(data);
-    setAnalysisResult(result);
-    setIsAnalyzing(false);
-  };
-
   const formatTime = (ms: number) => {
     const totalSeconds = Math.floor(ms / 1000);
     const mins = Math.floor(totalSeconds / 60);
@@ -384,18 +369,6 @@ const App: React.FC = () => {
          </div>
 
          <div className="flex gap-2 items-center">
-            {/* AI Analysis Button - Visible on Mobile if Roasting/Finished */}
-            {(status === RoastStatus.FINISHED || status === RoastStatus.ROASTING) && (
-               <button 
-                  onClick={handleGeminiAnalysis}
-                  disabled={isAnalyzing || data.length < 10}
-                  className="p-1.5 md:px-3 md:py-1.5 bg-indigo-900/50 hover:bg-indigo-900 border border-indigo-700 text-indigo-200 rounded flex items-center justify-center gap-1 md:gap-2 disabled:opacity-50"
-                  title="AI 分析"
-              >
-                  <Sparkles size={16} /> <span className="hidden md:inline">{isAnalyzing ? '分析中...' : 'AI 分析'}</span>
-              </button>
-            )}
-
             {status === RoastStatus.IDLE && (
                  <>
                  <button onClick={toggleSimulation} className="px-2 py-1 bg-[#333] hover:bg-[#444] border border-[#555] rounded text-[10px] md:text-xs text-gray-300 font-mono">
@@ -497,21 +470,6 @@ const App: React.FC = () => {
                     currentRoR={currentRoR}
                 />
             </div>
-            
-            {/* Analysis Overlay */}
-            {analysisResult && (
-                <div className="absolute inset-x-4 bottom-4 md:inset-auto md:top-4 md:right-4 md:w-96 bg-[#222]/95 border border-[#444] rounded shadow-2xl flex flex-col max-h-[50vh] z-30 backdrop-blur-md">
-                    <div className="flex justify-between items-center p-3 border-b border-[#444]">
-                        <h4 className="text-indigo-400 font-bold flex items-center gap-2 text-sm"><Sparkles size={14}/> 烘焙分析报告</h4>
-                        <button onClick={() => setAnalysisResult(null)} className="text-gray-400 hover:text-white p-1">✕</button>
-                    </div>
-                    <div className="p-3 overflow-y-auto">
-                        <pre className="font-sans text-xs md:text-sm text-gray-300 whitespace-pre-wrap leading-relaxed">
-                            {analysisResult}
-                        </pre>
-                    </div>
-                </div>
-            )}
         </div>
 
         {/* RIGHT COLUMN: Controls & Events */}
