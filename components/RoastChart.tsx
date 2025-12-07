@@ -28,8 +28,8 @@ const RoastChart: React.FC<RoastChartProps> = ({ data, events, currentBT, curren
   return (
     <div className="w-full h-full bg-black border border-[#333] relative overflow-hidden rounded-sm shadow-2xl">
       
-      {/* Real-time HUD Overlay */}
-      <div className="absolute top-2 left-14 z-10 bg-black/70 backdrop-blur-sm border border-[#444] rounded p-2 pointer-events-none shadow-lg">
+      {/* Real-time HUD Overlay - Hidden on Mobile (md:block) */}
+      <div className="hidden md:block absolute top-2 left-14 z-10 bg-black/70 backdrop-blur-sm border border-[#444] rounded p-2 pointer-events-none shadow-lg">
         <div className="flex gap-4 text-xs font-mono font-bold">
            <div className="flex flex-col items-center">
               <span className="text-[#ff4d4d]">{currentBT.toFixed(1)}</span>
@@ -47,7 +47,7 @@ const RoastChart: React.FC<RoastChartProps> = ({ data, events, currentBT, curren
       </div>
 
       <ResponsiveContainer width="100%" height="100%">
-        <LineChart data={data} margin={{ top: 20, right: 50, left: 0, bottom: 20 }}>
+        <LineChart data={data} margin={{ top: 20, right: 10, left: 0, bottom: 0 }}>
           {/* Artisan Dark Grid */}
           <CartesianGrid strokeDasharray="3 3" stroke="#222" vertical={true} horizontal={true} />
           
@@ -60,6 +60,7 @@ const RoastChart: React.FC<RoastChartProps> = ({ data, events, currentBT, curren
             domain={['auto', 'auto']}
             allowDataOverflow={true}
             minTickGap={30}
+            height={20}
           />
           
           {/* Left Axis: Temperature */}
@@ -69,7 +70,7 @@ const RoastChart: React.FC<RoastChartProps> = ({ data, events, currentBT, curren
             tick={{fontSize: 10, fill: '#888', fontFamily: 'JetBrains Mono'}}
             domain={[0, 'auto']}
             tickCount={8}
-            width={40}
+            width={35}
           />
           
           {/* Right Axis: RoR */}
@@ -78,8 +79,8 @@ const RoastChart: React.FC<RoastChartProps> = ({ data, events, currentBT, curren
             orientation="right" 
             stroke="#d4af37" 
             tick={{fontSize: 10, fill: '#d4af37', fontFamily: 'JetBrains Mono'}}
-            domain={[0, 25]} // RoR usually stays within 0-20
-            width={40}
+            domain={[-5, 'auto']} // Allows seeing crashes (negatives) and high spikes
+            width={35}
           />
           
           <Tooltip 

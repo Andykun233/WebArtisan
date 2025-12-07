@@ -54,6 +54,7 @@ export class TC4BluetoothService {
   private rxChar: BluetoothRemoteGATTCharacteristic | null = null;
   private txChar: BluetoothRemoteGATTCharacteristic | null = null;
   private onDataCallback: ((bt: number, et: number) => void) | null = null;
+  private onDisconnectCallback: (() => void) | null = null;
   private textDecoder = new TextDecoder();
   private textEncoder = new TextEncoder();
   private buffer = "";
@@ -61,8 +62,9 @@ export class TC4BluetoothService {
 
   constructor() {}
 
-  async connect(onData: (bt: number, et: number) => void): Promise<void> {
+  async connect(onData: (bt: number, et: number) => void, onDisconnect: () => void): Promise<string> {
     this.onDataCallback = onData;
+    this.onDisconnectCallback = onDisconnect;
 
     // Check for browser support
     if (!navigator.bluetooth) {
@@ -99,6 +101,8 @@ export class TC4BluetoothService {
       
       // Start polling loop in case device needs READ command
       this.startPolling();
+
+      return this.device.name || "TC4 Device";
 
     } catch (error) {
       console.error('Connection failed:', error);
@@ -166,7 +170,7 @@ export class TC4BluetoothService {
   private onDisconnected = () => {
     console.log('Device disconnected');
     if (this.pollingInterval) clearInterval(this.pollingInterval);
-    // Note: The App component should handle the UI update based on error/timeout or manual check
+    if (this.onDisconnectCallback) this.onDisconnectCallback();
   };
 
   disconnect() {

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Play, Square, Bluetooth, Thermometer, Clock, AlertCircle, Sparkles, Terminal, RotateCcw, Activity } from 'lucide-react';
+import { Play, Square, Bluetooth, Thermometer, Clock, AlertCircle, Sparkles, Terminal, RotateCcw, Activity, Loader2, Signal } from 'lucide-react';
 import RoastChart from './components/RoastChart';
 import StatCard from './components/StatCard';
 import { TC4BluetoothService } from './services/bluetoothService';
@@ -52,8 +52,10 @@ const App: React.FC = () => {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisResult, setAnalysisResult] = useState<string | null>(null);
 
-  // Error State
+  // Connection State
+  const [isConnecting, setIsConnecting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [deviceName, setDeviceName] = useState<string | null>(null);
 
   // Simulation
   const [isSimulating, setIsSimulating] = useState(false);
@@ -61,20 +63,33 @@ const App: React.FC = () => {
 
   // Handlers
   const handleBluetoothConnect = async () => {
+    setIsConnecting(true);
     try {
       setErrorMsg(null);
-      await bluetoothService.connect((bt, et) => {
-        // Update Refs for logic
-        btRef.current = bt;
-        etRef.current = et;
-        // Update State for UI
-        setCurrentBT(bt);
-        setCurrentET(et);
-      });
+      const name = await bluetoothService.connect(
+        (bt, et) => {
+          // Update Refs for logic
+          btRef.current = bt;
+          etRef.current = et;
+          // Update State for UI
+          setCurrentBT(bt);
+          setCurrentET(et);
+        },
+        () => {
+          // On Disconnect
+          setStatus(RoastStatus.IDLE);
+          setIsSimulating(false); // Stop sim if running
+          setDeviceName(null);
+          setErrorMsg("设备连接已断开");
+        }
+      );
+      setDeviceName(name);
       setStatus(RoastStatus.CONNECTED);
     } catch (err: any) {
       setErrorMsg(err.message || "连接失败。请检查设备电源和配对状态。");
       console.error(err);
+    } finally {
+      setIsConnecting(false);
     }
   };
 
@@ -213,9 +228,11 @@ const App: React.FC = () => {
         setIsSimulating(false);
         if (simulationIntervalRef.current) clearInterval(simulationIntervalRef.current);
         setStatus(RoastStatus.IDLE);
+        setDeviceName(null);
     } else {
         setIsSimulating(true);
         setStatus(RoastStatus.CONNECTED);
+        setDeviceName("模拟烘焙机 (Demo)");
         
         // Init physics vars
         let simBt = 150;
@@ -331,10 +348,38 @@ const App: React.FC = () => {
             </span>
             <div className="h-4 md:h-6 w-px bg-[#444] mx-1 md:mx-2 hidden md:block"></div>
             
-            {/* Connection Status */}
-            <div className="flex items-center gap-1.5 text-[10px] md:text-xs font-mono uppercase">
-               <span className={`w-2 h-2 md:w-3 md:h-3 rounded-full ${status !== RoastStatus.IDLE ? 'bg-[#39ff14] shadow-[0_0_8px_#39ff14]' : 'bg-red-500'}`}></span>
-               <span className="hidden sm:inline">{status === RoastStatus.IDLE ? '未连接' : '设备在线'}</span>
+            {/* Connection Status Indicator */}
+            <div className="group relative flex items-center gap-1.5 text-[10px] md:text-xs font-mono uppercase cursor-help py-2">
+               <span className={`w-2 h-2 md:w-3 md:h-3 rounded-full transition-colors duration-300 ${
+                    isConnecting ? 'bg-yellow-500 animate-pulse' :
+                    status !== RoastStatus.IDLE ? 'bg-[#39ff14] shadow-[0_0_8px_#39ff14]' : 'bg-red-500'
+               }`}></span>
+               <span className="hidden sm:inline transition-colors group-hover:text-white">
+                  {isConnecting ? '正在连接...' : 
+                   status === RoastStatus.IDLE ? '未连接' : '设备在线'}
+               </span>
+               
+               {/* Tooltip Popup */}
+               <div className="absolute top-full left-0 mt-1 w-48 p-2 bg-black/90 backdrop-blur border border-gray-600 rounded shadow-xl opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50 text-[10px] text-gray-300 transform origin-top-left">
+                  <div className="font-bold text-white mb-1 border-b border-gray-700 pb-1">系统状态</div>
+                  <div className="flex flex-col gap-1">
+                      <div>
+                        状态: <span className={status !== RoastStatus.IDLE ? 'text-green-400' : 'text-red-400'}>
+                             {isConnecting ? '初始化中...' : status === RoastStatus.IDLE ? '等待连接' : '已就绪'}
+                        </span>
+                      </div>
+                      {status !== RoastStatus.IDLE && (
+                          <>
+                            <div>设备: {deviceName || '未知'}</div>
+                            <div>协议: TC4/Modbus</div>
+                            <div className="flex items-center gap-1">信号: <Signal size={10} className="text-green-500"/> 强</div>
+                          </>
+                      )}
+                      {status === RoastStatus.IDLE && !isConnecting && (
+                          <div className="text-gray-500 italic">请点击右侧按钮连接设备</div>
+                      )}
+                  </div>
+               </div>
             </div>
          </div>
 
@@ -354,10 +399,19 @@ const App: React.FC = () => {
             {status === RoastStatus.IDLE && (
                  <>
                  <button onClick={toggleSimulation} className="px-2 py-1 bg-[#333] hover:bg-[#444] border border-[#555] rounded text-[10px] md:text-xs text-gray-300 font-mono">
-                   {isSimulating ? '停止' : '模拟'}
+                   {isSimulating ? '停止模拟' : '模拟'}
                  </button>
-                 <button onClick={handleBluetoothConnect} className="px-3 py-1.5 bg-[#005fb8] hover:bg-[#0070d8] text-white rounded font-bold text-xs md:text-sm flex items-center gap-1 border border-blue-400/20">
-                    <Bluetooth size={14} className="md:w-4 md:h-4" /> <span className="inline">连接</span>
+                 <button 
+                    onClick={handleBluetoothConnect} 
+                    disabled={isConnecting}
+                    className="px-3 py-1.5 bg-[#005fb8] hover:bg-[#0070d8] disabled:bg-[#004080] text-white rounded font-bold text-xs md:text-sm flex items-center gap-1 border border-blue-400/20 transition-all"
+                 >
+                    {isConnecting ? (
+                        <Loader2 size={14} className="animate-spin md:w-4 md:h-4" />
+                    ) : (
+                        <Bluetooth size={14} className="md:w-4 md:h-4" />
+                    )}
+                    <span className="inline">{isConnecting ? '连接中...' : '连接'}</span>
                 </button>
                 </>
             )}
@@ -384,7 +438,7 @@ const App: React.FC = () => {
 
       {/* ERROR MESSAGE */}
       {errorMsg && (
-        <div className="bg-red-900/80 text-white px-4 py-2 text-xs md:text-sm flex items-center gap-2 border-b border-red-500">
+        <div className="bg-red-900/80 text-white px-4 py-2 text-xs md:text-sm flex items-center gap-2 border-b border-red-500 animate-in fade-in slide-in-from-top-2">
             <AlertCircle size={14} /> {errorMsg}
         </div>
       )}
@@ -392,36 +446,49 @@ const App: React.FC = () => {
       {/* 2. MAIN WORKSPACE */}
       <div className="flex-1 flex flex-col md:flex-row overflow-hidden relative">
         
-        {/* LEFT COLUMN: LCD Displays */}
-        {/* Mobile: Top Bar, scrollable | Desktop: Left Sidebar */}
+        {/* DESKTOP LEFT SIDEBAR: Large LCD Displays - HIDDEN ON MOBILE */}
         <div className="
-            w-full md:w-64 bg-[#222] border-b md:border-b-0 md:border-r border-[#333] p-1.5 md:p-3 
-            flex flex-row md:flex-col gap-1.5 md:gap-2 overflow-x-auto md:overflow-y-auto shrink-0 no-scrollbar
+            hidden md:flex w-64 bg-[#222] border-r border-[#333] p-3 
+            flex-col gap-2 overflow-y-auto shrink-0 no-scrollbar
         ">
-            <div className="hidden md:block mb-2 pb-2 border-b border-[#333] text-xs font-bold text-gray-500 uppercase tracking-widest">实时温度</div>
+            <div className="mb-2 pb-2 border-b border-[#333] text-xs font-bold text-gray-500 uppercase tracking-widest">实时温度</div>
+            <StatCard label="Bean Temp" value={currentBT.toFixed(1)} unit="°C" color="red" />
+            <StatCard label="Env Temp" value={currentET.toFixed(1)} unit="°C" color="blue" />
             
-            {/* Mobile: use min-w to force scrolling if needed, but try to fit */}
-            <div className="min-w-[30%] md:min-w-0 flex-1">
-                <StatCard label="Bean Temp" value={currentBT.toFixed(1)} unit="°C" color="red" />
-            </div>
-            <div className="min-w-[30%] md:min-w-0 flex-1">
-                <StatCard label="Env Temp" value={currentET.toFixed(1)} unit="°C" color="blue" />
-            </div>
+            <div className="my-2 pb-2 border-b border-[#333] text-xs font-bold text-gray-500 uppercase tracking-widest">温升率</div>
+            <StatCard label="BT RoR" value={currentRoR.toFixed(1)} unit="°/min" color="yellow" />
             
-            <div className="hidden md:block my-2 pb-2 border-b border-[#333] text-xs font-bold text-gray-500 uppercase tracking-widest">温升率</div>
-            <div className="min-w-[25%] md:min-w-0 flex-1">
-                <StatCard label="BT RoR" value={currentRoR.toFixed(1)} unit="°/min" color="yellow" />
-            </div>
-            
-            <div className="hidden md:block my-2 pb-2 border-b border-[#333] text-xs font-bold text-gray-500 uppercase tracking-widest">时间</div>
-            <div className="min-w-[20%] md:min-w-0 flex-1">
-                <StatCard label="TIME" value={getDuration()} color="green" />
-            </div>
+            <div className="my-2 pb-2 border-b border-[#333] text-xs font-bold text-gray-500 uppercase tracking-widest">时间</div>
+            <StatCard label="TIME" value={getDuration()} color="green" />
         </div>
 
-        {/* CENTER COLUMN: Chart */}
+        {/* CENTER COLUMN: Chart + Mobile Ticker */}
         <div className="flex-1 bg-[#1a1a1a] flex flex-col relative min-h-0">
-            <div className="flex-1 p-1 pb-0">
+            
+            {/* MOBILE ONLY: Slim Data Ticker */}
+            <div className="md:hidden h-12 bg-black border-b border-[#333] flex items-center justify-around px-2 shrink-0 shadow-lg z-10">
+               <div className="flex flex-col items-center">
+                  <span className="text-[9px] text-gray-500 font-bold uppercase tracking-wide">BT 豆温</span>
+                  <span className="text-xl font-mono font-bold text-[#ff4d4d] leading-none">{currentBT.toFixed(1)}</span>
+               </div>
+               <div className="w-px h-6 bg-[#333]"></div>
+               <div className="flex flex-col items-center">
+                  <span className="text-[9px] text-gray-500 font-bold uppercase tracking-wide">ET 炉温</span>
+                  <span className="text-xl font-mono font-bold text-[#4d94ff] leading-none">{currentET.toFixed(1)}</span>
+               </div>
+               <div className="w-px h-6 bg-[#333]"></div>
+               <div className="flex flex-col items-center">
+                  <span className="text-[9px] text-gray-500 font-bold uppercase tracking-wide">RoR</span>
+                  <span className="text-xl font-mono font-bold text-[#ffd700] leading-none">{currentRoR.toFixed(1)}</span>
+               </div>
+               <div className="w-px h-6 bg-[#333]"></div>
+               <div className="flex flex-col items-center w-16">
+                  <span className="text-[9px] text-gray-500 font-bold uppercase tracking-wide">时间</span>
+                  <span className="text-sm font-mono font-bold text-[#39ff14] leading-none mt-1">{getDuration()}</span>
+               </div>
+            </div>
+
+            <div className="flex-1 p-0 md:p-1 md:pb-0 relative">
                 <RoastChart 
                     data={data} 
                     events={events} 
@@ -452,7 +519,7 @@ const App: React.FC = () => {
         <div className="
             w-full md:w-48 bg-[#222] border-t md:border-t-0 md:border-l border-[#333] p-2 
             flex flex-col md:flex-col gap-2 shrink-0 
-            pb-safe md:pb-2
+            pb-safe md:pb-2 z-20
         ">
              <div className="hidden md:block text-xs font-bold text-gray-500 uppercase tracking-widest mb-1 text-center">事件标记</div>
              
@@ -468,7 +535,7 @@ const App: React.FC = () => {
                             onClick={btn.action}
                             disabled={status !== RoastStatus.ROASTING || btn.disabled}
                             className={`
-                                w-full py-2.5 md:py-3 font-bold text-[11px] md:text-xs rounded-sm transition-all border select-none active:scale-95
+                                w-full py-3 md:py-3 font-bold text-[11px] md:text-xs rounded-sm transition-all border select-none active:scale-95 touch-manipulation
                                 ${status !== RoastStatus.ROASTING || btn.disabled 
                                     ? 'bg-[#2a2a2a] text-gray-600 border-transparent' 
                                     : isActive 
@@ -483,18 +550,33 @@ const App: React.FC = () => {
                  })}
              </div>
 
-             <div className="mt-auto border-t border-[#333] pt-2 hidden md:block">
-                 <div className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-2 flex items-center gap-1">
-                    <Terminal size={12}/> 事件日志
+             <div className="mt-auto border-t border-[#333] pt-3 hidden md:flex flex-col gap-2">
+                 <div className="text-[10px] font-bold text-[#666] uppercase tracking-wider flex items-center gap-2 px-1">
+                    <Terminal size={10} /> 事件日志 (LOG)
                  </div>
-                 <div className="h-48 bg-black border border-[#333] p-2 overflow-y-auto font-mono text-[10px] text-green-500/80 rounded-sm custom-scrollbar">
-                    {events.length === 0 && <span className="opacity-50">等待事件...</span>}
-                    {events.map((e, i) => (
-                        <div key={i} className="mb-1 border-b border-[#222] pb-1 last:border-0">
-                            <span className="text-gray-500">[{formatTime(e.time * 1000)}]</span>
-                            <span className="text-white ml-1">{e.label}</span>
+                 <div className="h-48 bg-[#0a0a0a] border border-[#333] rounded-sm overflow-y-auto custom-scrollbar shadow-inner relative">
+                    {events.length === 0 && (
+                        <div className="absolute inset-0 flex items-center justify-center text-[#333] text-[10px] italic">
+                            等待记录...
                         </div>
-                    )).reverse()}
+                    )}
+                    <div className="flex flex-col">
+                        {events.map((e, i) => (
+                            <div key={i} className="flex items-center justify-between p-2 border-b border-[#1c1c1c] hover:bg-[#111] transition-colors group">
+                                <div className="flex flex-col">
+                                    <span className="text-[#e0e0e0] font-bold text-[10px] group-hover:text-white transition-colors">
+                                        {e.label}
+                                    </span>
+                                    <span className="text-[#444] text-[9px] group-hover:text-[#666] transition-colors font-mono">
+                                        @ {e.temp.toFixed(1)}°C
+                                    </span>
+                                </div>
+                                <span className="text-[#007acc] font-mono text-[10px] bg-[#007acc]/10 px-1.5 py-0.5 rounded border border-[#007acc]/20">
+                                    {formatTime(e.time * 1000)}
+                                </span>
+                            </div>
+                        )).reverse()}
+                    </div>
                  </div>
              </div>
         </div>
