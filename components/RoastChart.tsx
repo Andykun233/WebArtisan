@@ -31,6 +31,13 @@ const RoastChart: React.FC<RoastChartProps> = ({ data, events, currentBT, curren
     ? Math.max(...allDataPoints.map(d => Math.max(d.bt, d.et))) + 10 
     : 250;
 
+  // Determine if we should show the ET line (hide if all 0/missing)
+  const hasActiveET = useMemo(() => {
+     if (data.length === 0) return false;
+     // Assume valid ET must be > 1.0 (to filter out default 0s)
+     return data.some(d => d.et > 1.0);
+  }, [data]);
+
   // --- RoR Analysis: Detect Flicks (Peaks) and Crashes (Valleys) ---
   const rorExtrema = useMemo(() => {
     const points: { time: number; ror: number; type: 'peak' | 'valley' }[] = [];
@@ -164,19 +171,22 @@ const RoastChart: React.FC<RoastChartProps> = ({ data, events, currentBT, curren
           )}
           
           {/* --- ACTIVE LINES --- */}
-          {/* Main Data Source */}
-          <Line 
-            data={data}
-            yAxisId="left"
-            type="monotone" 
-            dataKey="et" 
-            stroke="#4d94ff" 
-            strokeWidth={2} 
-            dot={false} 
-            name="ET 炉温"
-            isAnimationActive={false}
-          />
+          {/* Main Data Source - ET (Conditional) */}
+          {hasActiveET && (
+              <Line 
+                data={data}
+                yAxisId="left"
+                type="monotone" 
+                dataKey="et" 
+                stroke="#4d94ff" 
+                strokeWidth={2} 
+                dot={false} 
+                name="ET 炉温"
+                isAnimationActive={false}
+              />
+          )}
 
+          {/* Main Data Source - BT */}
           <Line 
             data={data}
             yAxisId="left"
