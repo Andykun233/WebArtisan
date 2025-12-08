@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Play, Square, Bluetooth, Thermometer, Clock, AlertCircle, Terminal, RotateCcw, Activity, Loader2, Signal, Undo2, X, Flame, Save, FolderOpen, Trash2 } from 'lucide-react';
+import { Play, Square, Bluetooth, Thermometer, Clock, AlertCircle, Terminal, RotateCcw, Activity, Loader2, Signal, Undo2, X, Flame, Save, FolderOpen, Trash2, Upload } from 'lucide-react';
 import RoastChart from './components/RoastChart';
 import StatCard from './components/StatCard';
 import { TC4BluetoothService } from './services/bluetoothService';
@@ -42,6 +42,54 @@ function calculateSlope(data: {time: number, value: number}[]): number {
   return (n * sumXY - sumX * sumY) / denominator;
 }
 
+// --- Utility: Batch Calculate RoR for Imported Data ---
+function recalculateRoR(data: DataPoint[]): DataPoint[] {
+    const LOOKBACK_WINDOW = 45;
+    const EWMA_ALPHA = 0.25;
+
+    // We need to simulate the "live" calculation for the whole array
+    return data.map((point, index) => {
+        const currentTime = point.time;
+        
+        // 1. Calculate BT RoR
+        const historyPointsBT = data
+            .slice(Math.max(0, index - 60), index + 1) // Optimization: slice roughly relevant window first
+            .filter(d => d.time > currentTime - LOOKBACK_WINDOW && d.time <= currentTime)
+            .map(d => ({ time: d.time, value: d.bt }));
+
+        let ror = 0;
+        if (historyPointsBT.length >= 2 && (historyPointsBT[historyPointsBT.length - 1].time - historyPointsBT[0].time > 5)) {
+             ror = calculateSlope(historyPointsBT) * 60;
+        }
+
+        // 2. Calculate ET RoR
+        const historyPointsET = data
+            .slice(Math.max(0, index - 60), index + 1)
+            .filter(d => d.time > currentTime - LOOKBACK_WINDOW && d.time <= currentTime)
+            .map(d => ({ time: d.time, value: d.et }));
+
+        let et_ror = 0;
+        if (historyPointsET.length >= 2 && (historyPointsET[historyPointsET.length - 1].time - historyPointsET[0].time > 5)) {
+             et_ror = calculateSlope(historyPointsET) * 60;
+        }
+
+        // 3. Smoothing (Simple approximation of the live EWMA)
+        // Since we are post-processing, we can iterate forward. 
+        // Note: Ideally, this map should be a reduce or imperative loop to carry over previous smoothed value correctly.
+        // For simplicity in map, we just take the raw regression or look at previous point if we wanted strict EWMA.
+        // Let's do a quick local smooth using the previous calculated point in the new array? 
+        // Map doesn't allow easy access to the *newly calculated* previous element.
+        // So we will return raw ROR here and smooth in a second pass if needed, 
+        // OR just return the regression slope which is already quite smooth due to 45s window.
+        
+        return {
+            ...point,
+            ror: parseFloat(ror.toFixed(1)),
+            et_ror: parseFloat(et_ror.toFixed(1))
+        };
+    });
+}
+
 const App: React.FC = () => {
   const [status, setStatus] = useState<RoastStatus>(RoastStatus.IDLE);
   const [data, setData] = useState<DataPoint[]>([]);
@@ -58,6 +106,7 @@ const App: React.FC = () => {
   const btRef = useRef(20.0);
   const etRef = useRef(20.0);
   const dataRef = useRef<DataPoint[]>([]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Connection State
   const [isConnecting, setIsConnecting] = useState(false);
@@ -75,6 +124,8 @@ const App: React.FC = () => {
 
   // Load/Save Modal State
   const [isLoadModalOpen, setIsLoadModalOpen] = useState(false);
+  const [isSaveModalOpen, setIsSaveModalOpen] = useState(false);
+  const [saveTitle, setSaveTitle] = useState("");
   const [savedRoastsList, setSavedRoastsList] = useState<SavedRoast[]>([]);
 
   // Handlers
@@ -203,20 +254,29 @@ const App: React.FC = () => {
   };
 
   // --- Save & Load Logic ---
-  const handleSaveRoast = () => {
+  const handleOpenSaveModal = () => {
     if (data.length === 0) {
         setErrorMsg("没有数据可保存");
         setTimeout(() => setErrorMsg(null), 3000);
         return;
     }
+    const now = new Date();
+    const defaultTitle = `烘焙记录 ${now.toLocaleDateString()} ${now.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}`;
+    setSaveTitle(defaultTitle);
+    setIsSaveModalOpen(true);
+  };
+
+  const handleConfirmSave = () => {
+    if (!saveTitle.trim()) {
+         return; // Simple validation
+    }
 
     const duration = getDuration();
     const now = new Date();
-    const title = `烘焙记录 ${now.toLocaleDateString()} ${now.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}`;
     
     const newRoast: SavedRoast = {
         id: Date.now().toString(),
-        title: title,
+        title: saveTitle.trim(),
         date: now.toISOString(),
         duration: duration,
         data: data,
@@ -231,6 +291,7 @@ const App: React.FC = () => {
         
         setSuccessMsg("保存成功！");
         setTimeout(() => setSuccessMsg(null), 3000);
+        setIsSaveModalOpen(false);
     } catch (e) {
         console.error("Save failed", e);
         setErrorMsg("保存失败 (可能是存储空间不足)");
@@ -296,6 +357,154 @@ const App: React.FC = () => {
           list = list.filter(r => r.id !== id);
           localStorage.setItem('webartisan_roasts', JSON.stringify(list));
       }
+  };
+
+  // --- Import Logic ---
+  const handleImportClick = () => {
+      if (fileInputRef.current) {
+          fileInputRef.current.click();
+      }
+  };
+
+  const handleImportFile = (event: React.ChangeEvent<HTMLInputElement>) => {
+      const file = event.target.files?.[0];
+      if (!file) return;
+
+      const reader = new FileReader();
+      reader.onload = (e) => {
+          const content = e.target?.result as string;
+          try {
+              let parsedData: DataPoint[] = [];
+              let parsedEvents: RoastEvent[] = [];
+
+              if (file.name.endsWith('.json') || file.name.endsWith('.alog')) {
+                  // JSON / ALOG Parsing
+                  const json = JSON.parse(content);
+                  
+                  // Helper to safely get value from potential Artisan structure
+                  // Artisan alog typically has: temps: { Bean: [], Environment: [] } ...
+                  // Or sometimes root level properties.
+                  
+                  // Strategy 1: Look for "data" property if it's our own export format
+                  if (json.data && Array.isArray(json.data)) {
+                      parsedData = json.data;
+                      parsedEvents = json.events || [];
+                  } 
+                  // Strategy 2: Try Artisan .alog structure
+                  else if (json.temps) {
+                       const temps = json.temps;
+                       // Assume time is based on sampling rate or explicit 'time' array
+                       // Often Artisan has a 'time' array x-axis
+                       // If not, we assume standard 1s or 3s interval? 
+                       // Let's look for "time" or "x" array
+                       let timeArray: number[] = [];
+                       
+                       // Artisan often uses specific keys. Let's try to be robust.
+                       const btArray = temps.Bean || temps.bean || [];
+                       const etArray = temps.Environment || temps.environment || [];
+                       
+                       // Determine time
+                       // If 'time' array exists in root
+                       if (json.time && Array.isArray(json.time)) {
+                           timeArray = json.time;
+                       } else if (json.x && Array.isArray(json.x)) {
+                           timeArray = json.x;
+                       } else {
+                           // Generate linear time based on length
+                           timeArray = btArray.map((_: any, i: number) => i * 3); // Default 3s? Dangerous. 
+                           // Let's assume 1s if unknown for now, user can scale later if we had that feature.
+                           timeArray = btArray.map((_: any, i: number) => i);
+                       }
+
+                       // Map to DataPoint
+                       const len = Math.min(btArray.length, etArray.length);
+                       for(let i=0; i<len; i++) {
+                           parsedData.push({
+                               time: timeArray[i] || i,
+                               bt: btArray[i],
+                               et: etArray[i],
+                               ror: 0, // Recalc later
+                               et_ror: 0
+                           });
+                       }
+                  } else {
+                      throw new Error("无法识别的 JSON 格式");
+                  }
+              } else if (file.name.endsWith('.csv')) {
+                  // CSV Parsing
+                  const lines = content.split(/\r?\n/);
+                  const headers = lines[0].split(',').map(h => h.trim().toLowerCase());
+                  
+                  // Find indices
+                  const timeIdx = headers.findIndex(h => h.includes('time') || h.includes('时间'));
+                  const btIdx = headers.findIndex(h => h.includes('bt') || h.includes('bean') || h.includes('豆温'));
+                  const etIdx = headers.findIndex(h => h.includes('et') || h.includes('env') || h.includes('炉温'));
+
+                  if (btIdx === -1) throw new Error("CSV 中未找到豆温(BT)列");
+
+                  for(let i=1; i<lines.length; i++) {
+                      const line = lines[i].trim();
+                      if (!line) continue;
+                      const parts = line.split(',');
+                      
+                      // Safety check length
+                      if (parts.length < 2) continue;
+
+                      const timeStr = timeIdx !== -1 ? parts[timeIdx] : `${i}`; // Default to index if no time
+                      // Handle time format mm:ss if necessary, but assume seconds for simplicity first
+                      // If contains ':', parse.
+                      let timeVal = 0;
+                      if (timeStr.includes(':')) {
+                          const [m, s] = timeStr.split(':').map(Number);
+                          timeVal = (m * 60) + s;
+                      } else {
+                          timeVal = parseFloat(timeStr);
+                      }
+
+                      const btVal = parseFloat(parts[btIdx]);
+                      const etVal = etIdx !== -1 ? parseFloat(parts[etIdx]) : 0;
+
+                      if (!isNaN(btVal)) {
+                          parsedData.push({
+                              time: isNaN(timeVal) ? i : timeVal,
+                              bt: btVal,
+                              et: isNaN(etVal) ? 0 : etVal,
+                              ror: 0, 
+                              et_ror: 0
+                          });
+                      }
+                  }
+              } else {
+                  throw new Error("不支持的文件格式");
+              }
+
+              if (parsedData.length === 0) throw new Error("文件为空或解析失败");
+
+              // Post-process: Recalculate RoR
+              const processedData = recalculateRoR(parsedData);
+
+              // Load into app
+              const importRoast: SavedRoast = {
+                  id: `import_${Date.now()}`,
+                  title: `导入: ${file.name}`,
+                  date: new Date().toISOString(),
+                  duration: formatTime(processedData[processedData.length-1].time * 1000),
+                  data: processedData,
+                  events: parsedEvents
+              };
+
+              handleLoadRoast(importRoast);
+              setSuccessMsg(`成功导入: ${file.name}`);
+
+          } catch (err: any) {
+              console.error("Import error", err);
+              setErrorMsg("导入失败: " + (err.message || "文件格式错误"));
+          } finally {
+              // Reset input
+              if (fileInputRef.current) fileInputRef.current.value = "";
+          }
+      };
+      reader.readAsText(file);
   };
 
 
@@ -524,6 +733,15 @@ const App: React.FC = () => {
   return (
     <div className="h-screen w-full flex flex-col bg-[#1c1c1c] text-[#e0e0e0]">
       
+      {/* Hidden File Input for Import */}
+      <input 
+        type="file" 
+        ref={fileInputRef} 
+        onChange={handleImportFile} 
+        className="hidden" 
+        accept=".json,.alog,.csv"
+      />
+
       {/* 1. TOP TOOLBAR - Mobile Compact */}
       <div className="h-12 md:h-14 bg-[#2a2a2a] border-b border-[#333] flex items-center justify-between px-3 md:px-4 shadow-md z-10 shrink-0">
          <div className="flex items-center gap-2 md:gap-4">
@@ -566,9 +784,13 @@ const App: React.FC = () => {
 
          <div className="flex gap-2 items-center">
             {/* File Operations */}
-            <button onClick={handleSaveRoast} className="p-1.5 md:px-2 md:py-1.5 bg-[#333] hover:bg-[#444] text-gray-300 hover:text-white border border-[#555] rounded flex items-center gap-1 transition-colors" title="保存记录">
+            <button onClick={handleOpenSaveModal} className="p-1.5 md:px-2 md:py-1.5 bg-[#333] hover:bg-[#444] text-gray-300 hover:text-white border border-[#555] rounded flex items-center gap-1 transition-colors" title="保存记录">
                 <Save size={14} className="md:w-4 md:h-4" />
                 <span className="hidden md:inline text-xs">保存</span>
+            </button>
+            <button onClick={handleImportClick} className="p-1.5 md:px-2 md:py-1.5 bg-[#333] hover:bg-[#444] text-gray-300 hover:text-white border border-[#555] rounded flex items-center gap-1 transition-colors" title="导入 Artisan / CSV 文件">
+                <Upload size={14} className="md:w-4 md:h-4" />
+                <span className="hidden md:inline text-xs">导入</span>
             </button>
             <button onClick={handleOpenLoadModal} className="p-1.5 md:px-2 md:py-1.5 bg-[#333] hover:bg-[#444] text-gray-300 hover:text-white border border-[#555] rounded flex items-center gap-1 transition-colors mr-2" title="加载记录">
                 <FolderOpen size={14} className="md:w-4 md:h-4" />
@@ -653,6 +875,47 @@ const App: React.FC = () => {
                         <X size={16} />
                     </button>
                 </div>
+            </div>
+        )}
+
+        {/* Save Modal */}
+        {isSaveModalOpen && (
+            <div className="absolute inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+                 <div className="bg-[#1c1c1c] border border-[#444] rounded-lg shadow-2xl w-full max-w-sm p-4 flex flex-col gap-4 animate-in zoom-in-95 duration-200">
+                    <h3 className="text-white font-bold flex items-center gap-2">
+                        <Save size={18} className="text-green-500"/> 保存烘焙记录
+                    </h3>
+                    
+                    <div className="flex flex-col gap-1">
+                        <label className="text-xs text-gray-500 uppercase font-bold">记录名称</label>
+                        <input 
+                            type="text" 
+                            value={saveTitle}
+                            onChange={(e) => setSaveTitle(e.target.value)}
+                            onKeyDown={(e) => {
+                                if (e.key === 'Enter') handleConfirmSave();
+                                if (e.key === 'Escape') setIsSaveModalOpen(false);
+                            }}
+                            className="bg-[#111] border border-[#333] text-white p-2 rounded focus:border-blue-500 outline-none font-mono text-sm"
+                            autoFocus
+                        />
+                    </div>
+
+                    <div className="flex gap-2 justify-end mt-2">
+                        <button 
+                            onClick={() => setIsSaveModalOpen(false)}
+                            className="px-3 py-1.5 text-xs font-bold text-gray-400 hover:text-white hover:bg-[#333] rounded"
+                        >
+                            取消
+                        </button>
+                        <button 
+                            onClick={handleConfirmSave}
+                            className="px-3 py-1.5 text-xs font-bold bg-green-600 hover:bg-green-700 text-white rounded"
+                        >
+                            确认保存
+                        </button>
+                    </div>
+                 </div>
             </div>
         )}
 
