@@ -8,8 +8,9 @@ import { DataPoint, RoastStatus, RoastEvent } from './types';
 
 const bluetoothService = new TC4BluetoothService();
 
-// --- Utility: Linear Regression for Slope Calculation ---
-// Returns slope (rate of change per unit time)
+// --- Utility: Linear Regression for Slope Calculation (Artisan Algorithm) ---
+// Calculates the slope of the best-fit line through the data points using Least Squares.
+// Returns slope (rate of change per unit time).
 function calculateSlope(data: {time: number, value: number}[]): number {
   const n = data.length;
   if (n < 2) return 0;
@@ -33,70 +34,47 @@ function calculateSlope(data: {time: number, value: number}[]): number {
 }
 
 // --- Utility: Batch Calculate RoR for Imported Data ---
+// Replicates the Artisan logic: 60s Lookback Window using Least Squares.
 function recalculateRoR(data: DataPoint[]): DataPoint[] {
-    const LOOKBACK_WINDOW = 45;
-    const EWMA_ALPHA = 0.25;
+    const LOOKBACK_WINDOW = 60; // Artisan Standard Span (often 30s or 60s)
 
-    // We need to simulate the "live" calculation for the whole array
-    // First pass: Calculate Raw RoR via Regression
-    const rawData = data.map((point, index) => {
+    return data.map((point, index) => {
         const currentTime = point.time;
         
         // 1. Calculate BT RoR
+        // Get points within the lookback window ending at current index
         const historyPointsBT = data
-            .slice(Math.max(0, index - 60), index + 1)
+            .slice(Math.max(0, index - 120), index + 1) // Optimization: limit slice
             .filter(d => d.time > currentTime - LOOKBACK_WINDOW && d.time <= currentTime)
             .map(d => ({ time: d.time, value: d.bt }));
 
         let ror = 0;
-        if (historyPointsBT.length >= 2 && (historyPointsBT[historyPointsBT.length - 1].time - historyPointsBT[0].time > 5)) {
-             ror = calculateSlope(historyPointsBT) * 60;
+        // Require at least a few seconds of data to calculate a slope
+        if (historyPointsBT.length >= 3 && (historyPointsBT[historyPointsBT.length - 1].time - historyPointsBT[0].time > 5)) {
+             ror = calculateSlope(historyPointsBT) * 60; // Convert slope (deg/sec) to RoR (deg/min)
         }
 
         // 2. Calculate ET RoR
         const historyPointsET = data
-            .slice(Math.max(0, index - 60), index + 1)
+            .slice(Math.max(0, index - 120), index + 1)
             .filter(d => d.time > currentTime - LOOKBACK_WINDOW && d.time <= currentTime)
             .map(d => ({ time: d.time, value: d.et }));
 
         let et_ror = 0;
-        if (historyPointsET.length >= 2 && (historyPointsET[historyPointsET.length - 1].time - historyPointsET[0].time > 5)) {
+        if (historyPointsET.length >= 3 && (historyPointsET[historyPointsET.length - 1].time - historyPointsET[0].time > 5)) {
              et_ror = calculateSlope(historyPointsET) * 60;
         }
         
-        return { ...point, ror, et_ror };
+        // Cap extreme values (Artisan usually clips artifacts)
+        if (ror > 100) ror = 100; if (ror < -50) ror = -50;
+        if (et_ror > 100) et_ror = 100; if (et_ror < -50) et_ror = -50;
+
+        return { 
+            ...point, 
+            ror: parseFloat(ror.toFixed(1)), 
+            et_ror: parseFloat(et_ror.toFixed(1)) 
+        };
     });
-
-    // Second pass: Apply EWMA Smoothing
-    const smoothedData: DataPoint[] = [];
-    let prevRoR = 0;
-    let prevETRoR = 0;
-
-    for (let i = 0; i < rawData.length; i++) {
-        const p = rawData[i];
-        let newRoR = p.ror;
-        let newETRoR = p.et_ror || 0;
-
-        if (i > 0) {
-            newRoR = (EWMA_ALPHA * p.ror) + ((1 - EWMA_ALPHA) * prevRoR);
-            newETRoR = (EWMA_ALPHA * (p.et_ror || 0)) + ((1 - EWMA_ALPHA) * prevETRoR);
-        }
-
-        // Cap extreme values
-        if (newRoR > 100) newRoR = 100; if (newRoR < -50) newRoR = -50;
-        if (newETRoR > 100) newETRoR = 100; if (newETRoR < -50) newETRoR = -50;
-
-        prevRoR = newRoR;
-        prevETRoR = newETRoR;
-
-        smoothedData.push({
-            ...p,
-            ror: parseFloat(newRoR.toFixed(1)),
-            et_ror: parseFloat(newETRoR.toFixed(1))
-        });
-    }
-
-    return smoothedData;
 }
 
 const App: React.FC = () => {
@@ -130,6 +108,10 @@ const App: React.FC = () => {
   // Undo Drop State
   const [showUndoDrop, setShowUndoDrop] = useState(false);
   const undoTimerRef = useRef<number | null>(null);
+
+  // Export Modal State
+  const [isExportModalOpen, setIsExportModalOpen] = useState(false);
+  const [exportFileName, setExportFileName] = useState("");
 
   // Handlers
   const handleBluetoothConnect = async () => {
@@ -257,12 +239,22 @@ const App: React.FC = () => {
   };
 
   // --- Export Logic (CSV) ---
-  const handleExportCSV = () => {
+  const handleOpenExportModal = () => {
       if (data.length === 0) {
           setErrorMsg("没有数据可导出");
           setTimeout(() => setErrorMsg(null), 3000);
           return;
       }
+      const now = new Date();
+      // Default name: roast_YYYYMMDD_HHMM
+      const defaultName = `roast_${now.toISOString().slice(0,10).replace(/-/g,'')}_${now.getHours().toString().padStart(2,'0')}${now.getMinutes().toString().padStart(2,'0')}`;
+      setExportFileName(defaultName);
+      setIsExportModalOpen(true);
+  };
+
+  const handleConfirmExport = (e?: React.FormEvent) => {
+      if (e) e.preventDefault();
+      setIsExportModalOpen(false);
 
       const now = new Date();
       const dateStr = now.toLocaleDateString('en-GB').replace(/\//g, '.'); // dd.mm.yyyy format
@@ -330,7 +322,10 @@ const App: React.FC = () => {
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
-      link.setAttribute('download', `roast_${now.toISOString().slice(0,10).replace(/-/g,'')}_${now.getHours()}${now.getMinutes()}.csv`);
+      
+      const finalName = exportFileName.trim() || `roast_${now.toISOString().slice(0,10).replace(/-/g,'')}`;
+      link.setAttribute('download', `${finalName}.csv`);
+      
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
@@ -592,12 +587,12 @@ const App: React.FC = () => {
       const currentBTVal = btRef.current;
       const currentETVal = etRef.current;
 
-      // --- Advanced RoR Calculation ---
-      // 1. Configuration
-      const LOOKBACK_WINDOW = 45; // Increased to 45s for stability (Artisan style)
-      const EWMA_ALPHA = 0.25;    // Smoothing factor (0.1 = very smooth/laggy, 1.0 = raw)
+      // --- Artisan-Style RoR Calculation ---
+      // Method: Least Squares Linear Regression over a fixed Time Span.
+      // Artisan Default Span is often 30s or 60s. We use 60s for smoothness.
+      const LOOKBACK_WINDOW = 60; 
       
-      // 2. Prepare Data for Regression (BT)
+      // 1. Prepare Data for Regression (BT)
       // Filter history points within the lookback window
       const historyPointsBT = dataRef.current
         .filter(d => d.time > currentTime - LOOKBACK_WINDOW)
@@ -607,16 +602,15 @@ const App: React.FC = () => {
 
       let calculatedRoR = 0;
       
-      // Only calculate if we have enough data duration (> 10 seconds) to avoid initial noise
-      if (regressionPointsBT.length >= 5 && (regressionPointsBT[regressionPointsBT.length - 1].time - regressionPointsBT[0].time > 10)) {
+      // Only calculate if we have enough data (at least 5 seconds of delta) to avoid noise
+      if (regressionPointsBT.length >= 5 && (regressionPointsBT[regressionPointsBT.length - 1].time - regressionPointsBT[0].time > 5)) {
          // Calculate Slope via Linear Regression (deg/sec)
          const slope = calculateSlope(regressionPointsBT);
-         // Convert to deg/min
+         // Convert to deg/min (RoR standard)
          calculatedRoR = slope * 60;
       }
 
-      // --- ET RoR Calculation ---
-      // Prepare Data for Regression (ET)
+      // 2. Prepare Data for Regression (ET)
       const historyPointsET = dataRef.current
         .filter(d => d.time > currentTime - LOOKBACK_WINDOW)
         .map(d => ({ time: d.time, value: d.et }));
@@ -624,52 +618,38 @@ const App: React.FC = () => {
       const regressionPointsET = [...historyPointsET, { time: currentTime, value: currentETVal }];
 
       let calculatedETRoR = 0;
-      if (regressionPointsET.length >= 5 && (regressionPointsET[regressionPointsET.length - 1].time - regressionPointsET[0].time > 10)) {
+      if (regressionPointsET.length >= 5 && (regressionPointsET[regressionPointsET.length - 1].time - regressionPointsET[0].time > 5)) {
           const slope = calculateSlope(regressionPointsET);
           calculatedETRoR = slope * 60;
       }
 
-      // 3. Apply EWMA Smoothing (Exponential Weighted Moving Average)
-      // BT RoR Smoothing
-      const previousRoR = dataRef.current.length > 0 ? dataRef.current[dataRef.current.length - 1].ror : 0;
-      let smoothedRoR = calculatedRoR;
+      // Note: Removed EWMA smoothing to match Artisan's pure LS approach. 
+      // The 60s window provides sufficient smoothing.
+
+      // Cap extreme values/noise
+      if (Math.abs(calculatedRoR) < 0.1) calculatedRoR = 0;
+      if (calculatedRoR > 100) calculatedRoR = 100;
+      if (calculatedRoR < -50) calculatedRoR = -50;
       
-      if (dataRef.current.length > 10) {
-          smoothedRoR = (EWMA_ALPHA * calculatedRoR) + ((1 - EWMA_ALPHA) * previousRoR);
-      }
+      if (Math.abs(calculatedETRoR) < 0.1) calculatedETRoR = 0;
+      if (calculatedETRoR > 100) calculatedETRoR = 100;
+      if (calculatedETRoR < -50) calculatedETRoR = -50;
 
-      // ET RoR Smoothing
-      const previousETRoR = dataRef.current.length > 0 ? (dataRef.current[dataRef.current.length - 1].et_ror || 0) : 0;
-      let smoothedETRoR = calculatedETRoR;
-      if (dataRef.current.length > 10) {
-          smoothedETRoR = (EWMA_ALPHA * calculatedETRoR) + ((1 - EWMA_ALPHA) * previousETRoR);
-      }
-
-      // Cap extreme values/noise for BT
-      if (Math.abs(smoothedRoR) < 0.1) smoothedRoR = 0;
-      if (smoothedRoR > 100) smoothedRoR = 100;
-      if (smoothedRoR < -50) smoothedRoR = -50;
-      
-      // Cap extreme values/noise for ET
-      if (Math.abs(smoothedETRoR) < 0.1) smoothedETRoR = 0;
-      if (smoothedETRoR > 100) smoothedETRoR = 100;
-      if (smoothedETRoR < -50) smoothedETRoR = -50;
-
-      // Round for display/storage
-      smoothedRoR = parseFloat(smoothedRoR.toFixed(1));
-      smoothedETRoR = parseFloat(smoothedETRoR.toFixed(1));
+      // Round for display
+      const finalRoR = parseFloat(calculatedRoR.toFixed(1));
+      const finalETRoR = parseFloat(calculatedETRoR.toFixed(1));
 
       // Update UI
-      setCurrentRoR(smoothedRoR);
-      setCurrentETRoR(smoothedETRoR);
+      setCurrentRoR(finalRoR);
+      setCurrentETRoR(finalETRoR);
 
       // Create new DataPoint
       const newDataPoint: DataPoint = { 
         time: currentTime, 
         bt: currentBTVal, 
         et: currentETVal, 
-        ror: smoothedRoR,
-        et_ror: smoothedETRoR
+        ror: finalRoR,
+        et_ror: finalETRoR
       };
 
       // Update Ref
@@ -817,6 +797,54 @@ const App: React.FC = () => {
         accept=".json,.alog,.csv"
       />
 
+      {/* EXPORT MODAL */}
+      {isExportModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+            <div className="bg-[#222] border border-[#444] rounded-lg shadow-2xl w-full max-w-sm overflow-hidden">
+                <div className="px-4 py-3 border-b border-[#333] flex justify-between items-center bg-[#2a2a2a]">
+                    <span className="font-bold text-gray-200 flex items-center gap-2">
+                        <Download size={16} /> 导出记录
+                    </span>
+                    <button onClick={() => setIsExportModalOpen(false)} className="text-gray-500 hover:text-gray-300">
+                        <X size={18} />
+                    </button>
+                </div>
+                <form onSubmit={handleConfirmExport} className="p-4 flex flex-col gap-4">
+                    <div>
+                        <label className="block text-xs font-bold text-gray-500 uppercase mb-1">文件名</label>
+                        <div className="flex items-center">
+                            <input 
+                                type="text" 
+                                value={exportFileName}
+                                onChange={(e) => setExportFileName(e.target.value)}
+                                className="flex-1 bg-[#111] border border-[#444] text-white px-3 py-2 text-sm rounded-l focus:outline-none focus:border-blue-500"
+                                autoFocus
+                            />
+                            <div className="bg-[#333] border border-l-0 border-[#444] text-gray-400 px-3 py-2 text-sm rounded-r">
+                                .csv
+                            </div>
+                        </div>
+                    </div>
+                    <div className="flex justify-end gap-2">
+                        <button 
+                            type="button"
+                            onClick={() => setIsExportModalOpen(false)}
+                            className="px-3 py-1.5 rounded text-sm font-bold text-gray-400 hover:bg-[#333] hover:text-white transition-colors"
+                        >
+                            取消
+                        </button>
+                        <button 
+                            type="submit"
+                            className="px-4 py-1.5 rounded text-sm font-bold bg-blue-600 hover:bg-blue-500 text-white shadow-lg transition-colors"
+                        >
+                            确认导出
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+      )}
+
       {/* 1. TOP TOOLBAR - Mobile Compact */}
       <div className="h-10 md:h-14 bg-[#2a2a2a] border-b border-[#333] flex items-center justify-between px-3 md:px-4 shadow-md z-10 shrink-0">
          <div className="flex items-center gap-2 md:gap-4">
@@ -859,7 +887,7 @@ const App: React.FC = () => {
 
          <div className="flex gap-2 items-center">
             {/* File Operations */}
-            <button onClick={handleExportCSV} className="p-1.5 md:px-2 md:py-1.5 bg-[#333] hover:bg-[#444] text-gray-300 hover:text-white border border-[#555] rounded flex items-center gap-1 transition-colors" title="导出 CSV">
+            <button onClick={handleOpenExportModal} className="p-1.5 md:px-2 md:py-1.5 bg-[#333] hover:bg-[#444] text-gray-300 hover:text-white border border-[#555] rounded flex items-center gap-1 transition-colors" title="导出 CSV">
                 <Download size={14} className="md:w-4 md:h-4" />
                 <span className="hidden md:inline text-xs">导出</span>
             </button>
