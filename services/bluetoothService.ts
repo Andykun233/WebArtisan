@@ -19,6 +19,7 @@ export class TC4BluetoothService {
     this.onDisconnectCallback = onDisconnect;
 
     // Check for browser support
+    // Use type assertion to bypass strict TS check on navigator
     const nav = navigator as any;
     if (!nav.bluetooth) {
       throw new Error("当前浏览器不支持 Web Bluetooth。请使用 Chrome, Edge 或 Bluefy (iOS)。");
