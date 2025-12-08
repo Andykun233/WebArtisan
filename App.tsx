@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Play, Square, Bluetooth, Thermometer, AlertCircle, Terminal, RotateCcw, Loader2, Signal, Undo2, X, Download, Upload, FileInput, Usb, Bug } from 'lucide-react';
 import RoastChart from './components/RoastChart';
@@ -996,10 +997,6 @@ const App: React.FC = () => {
 
             {status === RoastStatus.IDLE && (
                  <>
-                 <button onClick={toggleSimulation} className="px-2 py-1 bg-[#333] hover:bg-[#444] border border-[#555] rounded text-[10px] md:text-xs text-gray-300 font-mono">
-                   {isSimulating ? '停止' : '模拟'}
-                 </button>
-                 
                  {/* Serial Connection Button */}
                  <button 
                     onClick={handleSerialConnect} 

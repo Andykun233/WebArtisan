@@ -256,7 +256,6 @@ const RoastChart: React.FC<RoastChartProps> = ({ data, events, currentBT, curren
                 fill="#1c1c1c" // Dark center
                 stroke={point.type === 'peak' ? '#ff00ff' : '#00ffff'} // Magenta for Peak (Flick), Cyan for Valley (Crash)
                 strokeWidth={2}
-                shape="circle"
                 isFront={true}
             />
           ))}
