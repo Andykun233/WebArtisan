@@ -344,9 +344,28 @@ const App: React.FC = () => {
 
   const handleSerialConnect = async () => {
       setIsConnecting(true);
+      
+      // Prompt for Baud Rate
+      let baudRate = 115200;
+      const input = window.prompt("请输入波特率 (Baud Rate)\n默认: 115200 (TC4/Artisan)\nHC-05/06 常见值: 9600", "115200");
+      
+      if (input === null) {
+          setIsConnecting(false);
+          return;
+      }
+      
+      const parsed = parseInt(input.trim(), 10);
+      if (!isNaN(parsed) && parsed > 0) {
+          baudRate = parsed;
+      } else {
+          setErrorMsg("无效的波特率");
+          setIsConnecting(false);
+          return;
+      }
+
       try {
         setErrorMsg(null);
-        const name = await serialService.connect(handleDataUpdate, handleDisconnect);
+        const name = await serialService.connect(handleDataUpdate, handleDisconnect, baudRate);
         setDeviceName(name);
         setActiveService('serial');
         setStatus(RoastStatus.PREHEATING);

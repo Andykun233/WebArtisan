@@ -19,7 +19,6 @@ export class TC4BluetoothService {
     this.onDisconnectCallback = onDisconnect;
 
     // Check for browser support
-    // Use type assertion to bypass strict TS check on navigator
     const nav = navigator as any;
     if (!nav.bluetooth) {
       throw new Error("当前浏览器不支持 Web Bluetooth。请使用 Chrome, Edge 或 Bluefy (iOS)。");
@@ -68,12 +67,11 @@ export class TC4BluetoothService {
      if (this.pollingInterval) clearInterval(this.pollingInterval);
      
      // Send READ command every second according to TC4 protocol
-     // Cast to any to avoid window/NodeJS timer type conflicts
+     // Using CRLF (\r\n) instead of just \n for better compatibility
      this.pollingInterval = setInterval(async () => {
         if (this.server?.connected && this.txChar) {
             try {
-                // TC4 protocol: "READ" followed by newline
-                await this.txChar.writeValue(this.textEncoder.encode("READ\n"));
+                await this.txChar.writeValue(this.textEncoder.encode("READ\r\n"));
             } catch (e) {
                 console.warn("Failed to write READ command", e);
             }
@@ -89,17 +87,21 @@ export class TC4BluetoothService {
     if (!value) return;
 
     const chunk = this.textDecoder.decode(value);
+    // console.debug("Raw BLE Data:", chunk); // Uncomment for debugging
     this.buffer += chunk;
 
-    // TC4 lines end with \n
-    if (this.buffer.includes('\n')) {
-      const lines = this.buffer.split('\n');
-      // Process all complete lines
-      for (let i = 0; i < lines.length - 1; i++) {
-        this.parseTC4String(lines[i]);
+    // Handle both \n and \r for broader device support
+    if (this.buffer.match(/[\r\n]/)) {
+      const parts = this.buffer.split(/[\r\n]+/);
+      
+      // The last part is likely incomplete, keep it in buffer
+      this.buffer = parts.pop() || "";
+      
+      for (const line of parts) {
+          if (line.trim()) {
+              this.parseTC4String(line);
+          }
       }
-      // Keep the remainder
-      this.buffer = lines[lines.length - 1];
     }
   };
 

@@ -3,7 +3,6 @@ import { DataPoint } from '../types';
 export class TC4SerialService {
   private port: any | null = null;
   private reader: any | null = null;
-  private writer: any | null = null;
   private onDataCallback: ((bt: number, et: number) => void) | null = null;
   private onDisconnectCallback: (() => void) | null = null;
   private textDecoder = new TextDecoder();
@@ -14,7 +13,7 @@ export class TC4SerialService {
 
   constructor() {}
 
-  async connect(onData: (bt: number, et: number) => void, onDisconnect: () => void): Promise<string> {
+  async connect(onData: (bt: number, et: number) => void, onDisconnect: () => void, baudRate: number = 115200): Promise<string> {
     this.onDataCallback = onData;
     this.onDisconnectCallback = onDisconnect;
 
@@ -27,12 +26,10 @@ export class TC4SerialService {
       console.log('Requesting Serial Port...');
       this.port = await nav.serial.requestPort();
 
-      // Default to 115200 which is common for TC4 sketches (aArtisan). 
-      // Some HC-05 modules might default to 9600.
-      // Ideally this should be configurable, but 115200 is a good standard default.
-      await this.port.open({ baudRate: 115200 });
+      // Open with user-specified baudRate
+      await this.port.open({ baudRate: baudRate });
 
-      console.log('Serial Port Opened');
+      console.log(`Serial Port Opened at ${baudRate} baud`);
 
       // Start reading loop
       this.isReading = true;
@@ -57,7 +54,8 @@ export class TC4SerialService {
         if (this.port?.writable && !this.port.writable.locked) {
             try {
                 const writer = this.port.writable.getWriter();
-                await writer.write(this.textEncoder.encode("READ\n"));
+                // Send READ with CRLF for maximum compatibility
+                await writer.write(this.textEncoder.encode("READ\r\n"));
                 writer.releaseLock();
             } catch (e) {
                 console.warn("Failed to write READ command", e);
@@ -78,6 +76,8 @@ export class TC4SerialService {
             }
             if (value) {
                 const chunk = this.textDecoder.decode(value);
+                // Debug log to help users check baud rate issues
+                // console.debug("Raw Serial Data:", chunk); 
                 this.handleData(chunk);
             }
           }
@@ -91,31 +91,54 @@ export class TC4SerialService {
 
   private handleData(chunk: string) {
     this.buffer += chunk;
-    // Process lines
-    if (this.buffer.includes('\n')) {
-      const lines = this.buffer.split('\n');
-      for (let i = 0; i < lines.length - 1; i++) {
-        this.parseTC4String(lines[i]);
+    
+    // Improved regex split to handle \r\n, \n, or \r
+    if (this.buffer.match(/[\r\n]/)) {
+      const parts = this.buffer.split(/[\r\n]+/);
+      
+      // The last part is likely incomplete, keep it in buffer
+      // Note: If buffer ends exactly with newline, pop() is empty string, which is fine.
+      this.buffer = parts.pop() || "";
+      
+      for (const line of parts) {
+          if (line.trim()) {
+              this.parseTC4String(line);
+          }
       }
-      this.buffer = lines[lines.length - 1];
     }
   }
 
   private parseTC4String(line: string) {
-    // Expected format: "CHAN1,CHAN2,CHAN3,CHAN4" 
-    // Usually Chan1=BT, Chan2=ET
+    // Expected formats: 
+    // "CHAN1,CHAN2,..."
+    // "PROFILER,TIME,BT,ET,..."
     try {
-        const parts = line.split(',');
-        if (parts.length >= 2) {
-            const bt = parseFloat(parts[0]);
-            const et = parseFloat(parts[1]);
-            
-            if (!isNaN(bt) && !isNaN(et) && this.onDataCallback) {
-                this.onDataCallback(bt, et);
-            }
+        const cleanLine = line.trim();
+        // Ignore empty or comment lines
+        if (!cleanLine || cleanLine.startsWith('#')) return;
+
+        const parts = cleanLine.split(',');
+        
+        let bt: number = NaN;
+        let et: number = NaN;
+
+        if (parts.length >= 4 && parts[0] === 'PROFILER') {
+             // Handle some Artisan formats: PROFILER, time, bt, et
+             bt = parseFloat(parts[2]);
+             et = parseFloat(parts[3]);
+        } else if (parts.length >= 2) {
+             // Standard TC4: BT, ET
+             bt = parseFloat(parts[0]);
+             et = parseFloat(parts[1]);
+        }
+
+        if (!isNaN(bt) && !isNaN(et) && this.onDataCallback) {
+             this.onDataCallback(bt, et);
+        } else {
+             console.debug("Unparseable line:", line);
         }
     } catch (e) {
-        // Ignore parse errors for partial lines
+        console.warn("Parse error:", e);
     }
   }
 
