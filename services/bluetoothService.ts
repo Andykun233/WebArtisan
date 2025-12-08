@@ -16,7 +16,7 @@ export class TC4BluetoothService {
   private textEncoder = new TextEncoder();
   private buffer = "";
   private pollingInterval: number | null = null;
-  private lastET = 20.0;
+  // private lastET = 20.0; // Removed in favor of strict 0 default
 
   constructor() {}
 
@@ -157,29 +157,40 @@ export class TC4BluetoothService {
         const matches = cleanLine.match(/[-+]?[0-9]*\.?[0-9]+/g);
 
         if (matches) {
-            let numbers = matches.map(parseFloat);
+            // Map strings to floats and handle NaNs securely
+            const numbers = matches.map(n => {
+                const val = parseFloat(n);
+                return isNaN(val) ? 0 : val;
+            });
 
-            // INTELLIGENT FILTERING FOR MULTI-CHANNEL DEVICES
-            // Scenario: Device returns 4 or 8 channels, e.g., "0.00,0.00,29.65,0.00..."
-            // If we detect more than 2 numbers, we try to filter out the 0.00 values 
-            // assuming they are empty/disconnected channels.
-            if (numbers.length > 2) {
-                 const nonZero = numbers.filter(n => Math.abs(n) > 0.001);
-                 // Only apply filter if we found valid data, otherwise keep original (if all are 0)
-                 if (nonZero.length > 0) {
-                     numbers = nonZero;
-                 }
+            let bt = 0;
+            let et = 0;
+
+            // SPECIAL LOGIC FOR MULTI-CHANNEL DEVICES (e.g. 0.00, 0.00, 29.65...)
+            // If 3 or more numbers: 3rd number (Index 2) is BT.
+            if (numbers.length >= 3) {
+                bt = numbers[2];
+
+                // For ET: Check other channels (excluding index 2)
+                // We greedily look for the first non-zero value among the remaining channels.
+                // If all others are 0, ET is 0.
+                const potentialETs = numbers.filter((_, idx) => idx !== 2);
+                const foundET = potentialETs.find(n => Math.abs(n) > 0.001);
+                
+                et = foundET !== undefined ? foundET : 0;
+            } 
+            // STANDARD LOGIC (2 channels)
+            else if (numbers.length === 2) {
+                bt = numbers[0];
+                et = numbers[1];
+            } 
+            // SINGLE CHANNEL LOGIC
+            else if (numbers.length === 1) {
+                bt = numbers[0];
+                et = 0; // Default to 0 if not detected
             }
-            
-            if (numbers.length >= 2) {
-                const bt = numbers[0];
-                const et = numbers[1];
-                this.lastET = et;
-                if (this.onDataCallback) this.onDataCallback(bt, et);
-            } else if (numbers.length === 1) {
-                const bt = numbers[0];
-                if (this.onDataCallback) this.onDataCallback(bt, this.lastET);
-            }
+
+            if (this.onDataCallback) this.onDataCallback(bt, et);
         }
     } catch (e) {
         console.error("Error parsing BLE string", line, e);
