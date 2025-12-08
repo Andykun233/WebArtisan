@@ -1,12 +1,22 @@
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Play, Square, Bluetooth, Thermometer, Clock, AlertCircle, Terminal, RotateCcw, Activity, Loader2, Signal, Undo2, X, Flame } from 'lucide-react';
+import { Play, Square, Bluetooth, Thermometer, Clock, AlertCircle, Terminal, RotateCcw, Activity, Loader2, Signal, Undo2, X, Flame, Save, FolderOpen, Trash2 } from 'lucide-react';
 import RoastChart from './components/RoastChart';
 import StatCard from './components/StatCard';
 import { TC4BluetoothService } from './services/bluetoothService';
 import { DataPoint, RoastStatus, RoastEvent } from './types';
 
 const bluetoothService = new TC4BluetoothService();
+
+// --- Types for Saved Data ---
+interface SavedRoast {
+  id: string;
+  title: string;
+  date: string;
+  duration: string;
+  data: DataPoint[];
+  events: RoastEvent[];
+}
 
 // --- Utility: Linear Regression for Slope Calculation ---
 // Returns slope (rate of change per unit time)
@@ -52,6 +62,7 @@ const App: React.FC = () => {
   // Connection State
   const [isConnecting, setIsConnecting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [deviceName, setDeviceName] = useState<string | null>(null);
 
   // Simulation
@@ -61,6 +72,10 @@ const App: React.FC = () => {
   // Undo Drop State
   const [showUndoDrop, setShowUndoDrop] = useState(false);
   const undoTimerRef = useRef<number | null>(null);
+
+  // Load/Save Modal State
+  const [isLoadModalOpen, setIsLoadModalOpen] = useState(false);
+  const [savedRoastsList, setSavedRoastsList] = useState<SavedRoast[]>([]);
 
   // Handlers
   const handleBluetoothConnect = async () => {
@@ -186,6 +201,103 @@ const App: React.FC = () => {
         setEvents(prev => [...prev, { time, label, temp: btRef.current }]);
     }
   };
+
+  // --- Save & Load Logic ---
+  const handleSaveRoast = () => {
+    if (data.length === 0) {
+        setErrorMsg("没有数据可保存");
+        setTimeout(() => setErrorMsg(null), 3000);
+        return;
+    }
+
+    const duration = getDuration();
+    const now = new Date();
+    const title = `烘焙记录 ${now.toLocaleDateString()} ${now.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}`;
+    
+    const newRoast: SavedRoast = {
+        id: Date.now().toString(),
+        title: title,
+        date: now.toISOString(),
+        duration: duration,
+        data: data,
+        events: events
+    };
+
+    try {
+        const existing = localStorage.getItem('webartisan_roasts');
+        const list: SavedRoast[] = existing ? JSON.parse(existing) : [];
+        list.push(newRoast);
+        localStorage.setItem('webartisan_roasts', JSON.stringify(list));
+        
+        setSuccessMsg("保存成功！");
+        setTimeout(() => setSuccessMsg(null), 3000);
+    } catch (e) {
+        console.error("Save failed", e);
+        setErrorMsg("保存失败 (可能是存储空间不足)");
+        setTimeout(() => setErrorMsg(null), 3000);
+    }
+  };
+
+  const handleOpenLoadModal = () => {
+      const existing = localStorage.getItem('webartisan_roasts');
+      if (existing) {
+          try {
+             const list = JSON.parse(existing);
+             setSavedRoastsList(Array.isArray(list) ? list.reverse() : []);
+          } catch(e) {
+             setSavedRoastsList([]);
+          }
+      } else {
+          setSavedRoastsList([]);
+      }
+      setIsLoadModalOpen(true);
+  };
+
+  const handleLoadRoast = (roast: SavedRoast) => {
+      // 1. Stop simulations if any
+      if (isSimulating) {
+        toggleSimulation();
+      }
+      
+      // 2. Set State
+      setData(roast.data);
+      dataRef.current = roast.data; // Sync ref
+      setEvents(roast.events);
+      setStatus(RoastStatus.FINISHED); // View mode
+      setStartTime(null); // Static
+      
+      // 3. Update Display Values to end of roast
+      if (roast.data.length > 0) {
+          const last = roast.data[roast.data.length - 1];
+          setCurrentBT(last.bt);
+          setCurrentET(last.et);
+          setCurrentRoR(last.ror);
+          setCurrentETRoR(last.et_ror || 0);
+          btRef.current = last.bt;
+          etRef.current = last.et;
+      }
+
+      setIsLoadModalOpen(false);
+      setSuccessMsg(`已加载: ${roast.title}`);
+      setTimeout(() => setSuccessMsg(null), 3000);
+  };
+
+  const handleDeleteRoast = (id: string, e: React.MouseEvent) => {
+      e.stopPropagation();
+      if (!window.confirm("确定要永久删除这条记录吗？")) return;
+
+      const newList = savedRoastsList.filter(r => r.id !== id);
+      setSavedRoastsList(newList);
+      
+      // Update LocalStorage (Read raw list, filter, save back)
+      const existing = localStorage.getItem('webartisan_roasts');
+      if (existing) {
+          let list: SavedRoast[] = JSON.parse(existing);
+          list = list.filter(r => r.id !== id);
+          localStorage.setItem('webartisan_roasts', JSON.stringify(list));
+      }
+  };
+
 
   // RoR Calculation and Data Recording
   useEffect(() => {
@@ -335,6 +447,7 @@ const App: React.FC = () => {
   const getDuration = () => {
      if (status === RoastStatus.ROASTING && startTime) return formatTime(Date.now() - startTime);
      if (startTime && data.length > 0) return formatTime(data[data.length-1].time * 1000);
+     if (data.length > 0 && status === RoastStatus.FINISHED) return formatTime(data[data.length-1].time * 1000);
      return "00:00";
   }
 
@@ -452,6 +565,16 @@ const App: React.FC = () => {
          </div>
 
          <div className="flex gap-2 items-center">
+            {/* File Operations */}
+            <button onClick={handleSaveRoast} className="p-1.5 md:px-2 md:py-1.5 bg-[#333] hover:bg-[#444] text-gray-300 hover:text-white border border-[#555] rounded flex items-center gap-1 transition-colors" title="保存记录">
+                <Save size={14} className="md:w-4 md:h-4" />
+                <span className="hidden md:inline text-xs">保存</span>
+            </button>
+            <button onClick={handleOpenLoadModal} className="p-1.5 md:px-2 md:py-1.5 bg-[#333] hover:bg-[#444] text-gray-300 hover:text-white border border-[#555] rounded flex items-center gap-1 transition-colors mr-2" title="加载记录">
+                <FolderOpen size={14} className="md:w-4 md:h-4" />
+                <span className="hidden md:inline text-xs">加载</span>
+            </button>
+
             {status === RoastStatus.IDLE && (
                  <>
                  <button onClick={toggleSimulation} className="px-2 py-1 bg-[#333] hover:bg-[#444] border border-[#555] rounded text-[10px] md:text-xs text-gray-300 font-mono">
@@ -493,10 +616,15 @@ const App: React.FC = () => {
         </div>
       </div>
 
-      {/* ERROR MESSAGE */}
+      {/* NOTIFICATIONS */}
       {errorMsg && (
         <div className="bg-red-900/80 text-white px-4 py-2 text-xs md:text-sm flex items-center gap-2 border-b border-red-500 animate-in fade-in slide-in-from-top-2">
             <AlertCircle size={14} /> {errorMsg}
+        </div>
+      )}
+      {successMsg && (
+        <div className="bg-green-900/80 text-white px-4 py-2 text-xs md:text-sm flex items-center gap-2 border-b border-green-500 animate-in fade-in slide-in-from-top-2">
+            <Signal size={14} /> {successMsg}
         </div>
       )}
 
@@ -524,6 +652,50 @@ const App: React.FC = () => {
                     >
                         <X size={16} />
                     </button>
+                </div>
+            </div>
+        )}
+
+        {/* Load Modal */}
+        {isLoadModalOpen && (
+            <div className="absolute inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+                <div className="bg-[#1c1c1c] border border-[#444] rounded-lg shadow-2xl w-full max-w-lg max-h-[80vh] flex flex-col animate-in zoom-in-95 duration-200">
+                    <div className="flex items-center justify-between p-4 border-b border-[#333]">
+                        <h3 className="text-white font-bold flex items-center gap-2">
+                            <FolderOpen size={18} className="text-orange-500"/> 加载烘焙记录
+                        </h3>
+                        <button onClick={() => setIsLoadModalOpen(false)} className="text-gray-400 hover:text-white">
+                            <X size={20} />
+                        </button>
+                    </div>
+                    <div className="flex-1 overflow-y-auto p-2 custom-scrollbar">
+                        {savedRoastsList.length === 0 ? (
+                            <div className="text-center py-10 text-gray-500 italic">没有找到已保存的记录</div>
+                        ) : (
+                            <div className="flex flex-col gap-2">
+                                {savedRoastsList.map((roast) => (
+                                    <div key={roast.id} className="bg-[#222] hover:bg-[#2a2a2a] border border-[#333] rounded p-3 flex items-center justify-between group transition-colors cursor-pointer" onClick={() => handleLoadRoast(roast)}>
+                                        <div className="flex flex-col">
+                                            <span className="text-sm font-bold text-gray-200 group-hover:text-white">{roast.title}</span>
+                                            <div className="flex gap-3 text-xs text-gray-500 font-mono mt-1">
+                                                <span>时长: {roast.duration}</span>
+                                                <span>点数: {roast.data.length}</span>
+                                            </div>
+                                        </div>
+                                        <div className="flex items-center gap-2">
+                                            <button 
+                                                onClick={(e) => handleDeleteRoast(roast.id, e)}
+                                                className="p-2 text-gray-600 hover:text-red-500 transition-colors rounded hover:bg-red-900/20"
+                                                title="删除"
+                                            >
+                                                <Trash2 size={16} />
+                                            </button>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
                 </div>
             </div>
         )}
