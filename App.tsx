@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Play, Square, Bluetooth, Thermometer, Clock, AlertCircle, Terminal, RotateCcw, Activity, Loader2, Signal, Undo2, X, Flame, Download, Upload } from 'lucide-react';
+import { Play, Square, Bluetooth, Thermometer, Clock, AlertCircle, Terminal, RotateCcw, Activity, Loader2, Signal, Undo2, X, Flame, Download, Upload, FileInput } from 'lucide-react';
 import RoastChart from './components/RoastChart';
 import StatCard from './components/StatCard';
 import { TC4BluetoothService } from './services/bluetoothService';
@@ -77,10 +77,202 @@ function recalculateRoR(data: DataPoint[]): DataPoint[] {
     });
 }
 
+// --- Utility: Parse Roast Log (Shared Logic) ---
+const parseRoastLog = (content: string, fileName: string): { data: DataPoint[], events: RoastEvent[] } => {
+    let parsedData: DataPoint[] = [];
+    let parsedEvents: RoastEvent[] = [];
+
+    if (fileName.endsWith('.json') || fileName.endsWith('.alog')) {
+        // JSON / ALOG Parsing
+        const json = JSON.parse(content);
+        
+        // Support standard Artisan "timex", "temp1" (ET/BT), "temp2" (BT) structure
+        let btArray: number[] = [];
+        let etArray: number[] = [];
+        let timeArray: number[] = [];
+
+        // 1. Try to extract Temperature Arrays
+        if (json.temps) {
+            // Older or detailed format
+            btArray = json.temps.Bean || json.temps.bean || [];
+            etArray = json.temps.Environment || json.temps.environment || [];
+            if (json.temps.x) timeArray = json.temps.x;
+        } else {
+            // Root level structure (Common in newer Artisan exports)
+            btArray = json.temp2 || json.Bean || [];
+            etArray = json.temp1 || json.Environment || [];
+        }
+
+        // 2. Try to extract Time Array
+        if (json.timex && Array.isArray(json.timex)) {
+            timeArray = json.timex;
+        } else if (json.time && Array.isArray(json.time)) {
+            timeArray = json.time;
+        }
+
+        // 3. Fallback: If no time, generate from index
+        if (!timeArray || timeArray.length === 0) {
+            if (btArray.length > 0) {
+                const interval = json.samplinginterval || 3.0;
+                timeArray = btArray.map((_: any, i: number) => i * interval);
+            } else if (json.data && Array.isArray(json.data)) {
+                // Legacy format support
+                parsedData = json.data;
+                parsedEvents = json.events || [];
+            }
+        }
+
+        // 4. Construct DataPoints if we parsed arrays
+        if (parsedData.length === 0 && btArray.length > 0) {
+            const len = Math.min(btArray.length, timeArray.length);
+            for(let i = 0; i < len; i++) {
+                parsedData.push({
+                    time: timeArray[i],
+                    bt: btArray[i],
+                    et: etArray[i] || 0,
+                    ror: 0,
+                    et_ror: 0
+                });
+            }
+        }
+
+        // 5. Extract Events (Try 'computed' first for standard events)
+        if (json.computed) {
+            const c = json.computed;
+            const eventMapping: {[key:string]: string} = {
+                'CHARGE_BT': '入豆',
+                'TP_time': '回温点',
+                'DRY_time': '脱水结束',
+                'FCs_time': '一爆开始',
+                'FCe_time': '一爆结束',
+                'SCs_time': '二爆开始',
+                'SCe_time': '二爆结束',
+                'DROP_time': '下豆'
+            };
+
+            for (const [key, label] of Object.entries(eventMapping)) {
+                    if (c[key] !== undefined && c[key] > 0) {
+                        if (key.endsWith('_time')) {
+                            const t = c[key];
+                            const closest = parsedData.reduce((prev, curr) => 
+                                Math.abs(curr.time - t) < Math.abs(prev.time - t) ? curr : prev
+                            , parsedData[0]);
+                            
+                            parsedEvents.push({ time: t, label: label, temp: closest.bt });
+                        }
+                        else if (key === 'CHARGE_BT') {
+                            parsedEvents.push({ time: 0, label: label, temp: c[key] });
+                        }
+                    }
+            }
+        }
+
+    } else if (fileName.endsWith('.csv')) {
+        // CSV Parsing
+        const lines = content.split(/\r?\n/);
+        
+        // 1. Detect Header Line (Look for 'Time' or 'BT')
+        let headerIdx = -1;
+        for (let i = 0; i < Math.min(lines.length, 20); i++) {
+            const lower = lines[i].toLowerCase();
+            if (lower.includes('time') && (lower.includes('bt') || lower.includes('bean') || lower.includes('temp'))) {
+                headerIdx = i;
+                break;
+            }
+        }
+        if (headerIdx === -1) throw new Error("CSV 中未找到表头 (Time/BT)");
+
+        // 2. Detect Delimiter (comma, semicolon, tab)
+        const headerLine = lines[headerIdx];
+        const commaCount = (headerLine.match(/,/g) || []).length;
+        const semiCount = (headerLine.match(/;/g) || []).length;
+        const tabCount = (headerLine.match(/\t/g) || []).length;
+        
+        let delimiter = ',';
+        if (tabCount > commaCount && tabCount > semiCount) delimiter = '\t';
+        else if (semiCount > commaCount) delimiter = ';';
+
+        const headers = headerLine.split(delimiter).map(h => h.trim().toLowerCase());
+        
+        const timeIdx = headers.findIndex(h => h.startsWith('time'));
+        // BT usually 'BT', 'Bean', 'Temp2'
+        const btIdx = headers.findIndex(h => h === 'bt' || h.includes('bean') || h === 'temp2');
+        // ET usually 'ET', 'Env', 'Temp1'
+        const etIdx = headers.findIndex(h => h === 'et' || h.includes('env') || h === 'temp1');
+        const eventIdx = headers.findIndex(h => h.includes('event') || h.includes('事件'));
+
+        if (btIdx === -1) throw new Error("CSV 中未找到豆温(BT)列");
+
+        for(let i = headerIdx + 1; i < lines.length; i++) {
+            const line = lines[i].trim();
+            if (!line) continue;
+            const parts = line.split(delimiter);
+            
+            // Handle Time
+            let timeVal = 0;
+            if (timeIdx !== -1) {
+                const tStr = parts[timeIdx].trim();
+                if (tStr.includes(':')) {
+                    // mm:ss format
+                    const [m, s] = tStr.split(':').map(Number);
+                    timeVal = (m * 60) + (s || 0);
+                } else {
+                    timeVal = parseFloat(tStr);
+                }
+            } else {
+                // Fallback time if no column
+                timeVal = i - headerIdx; 
+            }
+
+            const btVal = parseFloat(parts[btIdx]);
+            const etVal = etIdx !== -1 ? parseFloat(parts[etIdx]) : 0;
+
+            if (!isNaN(btVal)) {
+                parsedData.push({
+                    time: isNaN(timeVal) ? 0 : timeVal,
+                    bt: btVal,
+                    et: isNaN(etVal) ? 0 : etVal,
+                    ror: 0, 
+                    et_ror: 0
+                });
+
+                // Handle Event
+                if (eventIdx !== -1 && parts[eventIdx]) {
+                    const evtLabel = parts[eventIdx].trim();
+                    if (evtLabel) {
+                        // Map English labels to Chinese if needed
+                        const labelMap: any = { 'CHARGE': '入豆', 'DRY END': '脱水结束', 'FC START': '一爆开始', 'FC END': '一爆结束', 'DROP': '下豆', 'TP': '回温点' };
+                        const finalLabel = labelMap[evtLabel.toUpperCase()] || evtLabel;
+                        parsedEvents.push({
+                            time: timeVal,
+                            label: finalLabel,
+                            temp: btVal
+                        });
+                    }
+                }
+            }
+        }
+    } else {
+        throw new Error("不支持的文件格式");
+    }
+
+    if (parsedData.length === 0) throw new Error("文件为空或解析失败");
+
+    // Post-process: Recalculate RoR
+    const processedData = recalculateRoR(parsedData);
+    return { data: processedData, events: parsedEvents };
+}
+
+
 const App: React.FC = () => {
   const [status, setStatus] = useState<RoastStatus>(RoastStatus.IDLE);
   const [data, setData] = useState<DataPoint[]>([]);
   const [events, setEvents] = useState<RoastEvent[]>([]);
+  
+  // Background Data (Reference Curve)
+  const [backgroundData, setBackgroundData] = useState<DataPoint[]>([]);
+  const [backgroundEvents, setBackgroundEvents] = useState<RoastEvent[]>([]);
+
   const [startTime, setStartTime] = useState<number | null>(null);
   
   // Instant values for display
@@ -94,6 +286,7 @@ const App: React.FC = () => {
   const etRef = useRef(20.0);
   const dataRef = useRef<DataPoint[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const backgroundInputRef = useRef<HTMLInputElement>(null);
 
   // Connection State
   const [isConnecting, setIsConnecting] = useState(false);
@@ -149,7 +342,7 @@ const App: React.FC = () => {
     const now = Date.now();
     setStartTime(now);
     
-    // Reset Data
+    // Reset Data but KEEP background data
     setData([]);
     dataRef.current = [];
     
@@ -214,6 +407,9 @@ const App: React.FC = () => {
     setStartTime(null);
     setCurrentRoR(0);
     setCurrentETRoR(0);
+    
+    // Optional: Clear background on reset? Maybe keep it.
+    // setBackgroundData([]); 
   };
 
   const handleEvent = (label: string) => {
@@ -293,8 +489,6 @@ const App: React.FC = () => {
       data.forEach(d => {
           const time1Str = formatTime(d.time * 1000);
           
-          // Time2: If Charge exists, Time2 is time since Charge. If before charge, empty or negative.
-          // In standard CSV, usually just empty if irrelevant, or 00:00.
           let time2Str = '';
           if (chargeEvent && d.time >= chargeTime) {
               time2Str = formatTime((d.time - chargeTime) * 1000);
@@ -336,247 +530,72 @@ const App: React.FC = () => {
 
   // --- Import Logic ---
   const handleImportClick = () => {
-      if (fileInputRef.current) {
-          fileInputRef.current.click();
-      }
+      if (fileInputRef.current) fileInputRef.current.click();
+  };
+
+  const handleBackgroundClick = () => {
+      if (backgroundInputRef.current) backgroundInputRef.current.click();
   };
 
   const handleImportFile = (event: React.ChangeEvent<HTMLInputElement>) => {
       const file = event.target.files?.[0];
       if (!file) return;
+      processImport(file, false);
+  };
 
+  const handleBackgroundFile = (event: React.ChangeEvent<HTMLInputElement>) => {
+      const file = event.target.files?.[0];
+      if (!file) return;
+      processImport(file, true);
+  };
+
+  const processImport = (file: File, isBackground: boolean) => {
       const reader = new FileReader();
       reader.onload = (e) => {
           const content = e.target?.result as string;
           try {
-              let parsedData: DataPoint[] = [];
-              let parsedEvents: RoastEvent[] = [];
+              const { data: parsedData, events: parsedEvents } = parseRoastLog(content, file.name);
 
-              if (file.name.endsWith('.json') || file.name.endsWith('.alog')) {
-                  // JSON / ALOG Parsing
-                  const json = JSON.parse(content);
-                  
-                  // Support standard Artisan "timex", "temp1" (ET/BT), "temp2" (BT) structure
-                  // Or the "temps" object structure
-                  let btArray: number[] = [];
-                  let etArray: number[] = [];
-                  let timeArray: number[] = [];
-
-                  // 1. Try to extract Temperature Arrays
-                  if (json.temps) {
-                      // Older or detailed format
-                      btArray = json.temps.Bean || json.temps.bean || [];
-                      etArray = json.temps.Environment || json.temps.environment || [];
-                      if (json.temps.x) timeArray = json.temps.x;
-                  } else {
-                      // Root level structure (Common in newer Artisan exports)
-                      // Usually temp2 is Bean, temp1 is Environment (or user configured)
-                      // If temp2 has data, use it as BT.
-                      btArray = json.temp2 || json.Bean || [];
-                      etArray = json.temp1 || json.Environment || [];
-                  }
-
-                  // 2. Try to extract Time Array
-                  if (json.timex && Array.isArray(json.timex)) {
-                      timeArray = json.timex;
-                  } else if (json.time && Array.isArray(json.time)) {
-                      timeArray = json.time;
-                  }
-
-                  // 3. Fallback: If no time, generate from index
-                  if (!timeArray || timeArray.length === 0) {
-                      if (btArray.length > 0) {
-                          const interval = json.samplinginterval || 3.0;
-                          timeArray = btArray.map((_: any, i: number) => i * interval);
-                      } else if (json.data && Array.isArray(json.data)) {
-                          // Our own export format (legacy)
-                          parsedData = json.data;
-                          parsedEvents = json.events || [];
-                      }
-                  }
-
-                  // 4. Construct DataPoints if we parsed arrays
-                  if (parsedData.length === 0 && btArray.length > 0) {
-                      const len = Math.min(btArray.length, timeArray.length);
-                      for(let i = 0; i < len; i++) {
-                          parsedData.push({
-                              time: timeArray[i],
-                              bt: btArray[i],
-                              et: etArray[i] || 0,
-                              ror: 0,
-                              et_ror: 0
-                          });
-                      }
-                  }
-
-                  // 5. Extract Events (Try 'computed' first for standard events)
-                  if (json.computed) {
-                      const c = json.computed;
-                      const eventMapping: {[key:string]: string} = {
-                          'CHARGE_BT': '入豆',
-                          'TP_time': '回温点',
-                          'DRY_time': '脱水结束',
-                          'FCs_time': '一爆开始',
-                          'FCe_time': '一爆结束',
-                          'SCs_time': '二爆开始',
-                          'SCe_time': '二爆结束',
-                          'DROP_time': '下豆'
-                      };
-
-                      // Special handling: 'computed' keys usually store the Value (Temp) or Time
-                      // For times: DRY_time, TP_time, etc.
-                      for (const [key, label] of Object.entries(eventMapping)) {
-                           if (c[key] !== undefined && c[key] > 0) {
-                               // Check if key implies time
-                               if (key.endsWith('_time')) {
-                                   // Find temp at this time
-                                   const t = c[key];
-                                   const closest = parsedData.reduce((prev, curr) => 
-                                      Math.abs(curr.time - t) < Math.abs(prev.time - t) ? curr : prev
-                                   , parsedData[0]);
-                                   
-                                   parsedEvents.push({ time: t, label: label, temp: closest.bt });
-                               }
-                               // CHARGE_BT is a temp, usually happens at time 0 or first index
-                               else if (key === 'CHARGE_BT') {
-                                   parsedEvents.push({ time: 0, label: label, temp: c[key] });
-                               }
-                           }
-                      }
-                  }
-
-              } else if (file.name.endsWith('.csv')) {
-                  // CSV Parsing
-                  const lines = content.split(/\r?\n/);
-                  
-                  // 1. Detect Header Line (Look for 'Time' or 'BT')
-                  let headerIdx = -1;
-                  for (let i = 0; i < Math.min(lines.length, 20); i++) {
-                      const lower = lines[i].toLowerCase();
-                      if (lower.includes('time') && (lower.includes('bt') || lower.includes('bean') || lower.includes('temp'))) {
-                          headerIdx = i;
-                          break;
-                      }
-                  }
-                  if (headerIdx === -1) throw new Error("CSV 中未找到表头 (Time/BT)");
-
-                  // 2. Detect Delimiter (comma, semicolon, tab)
-                  const headerLine = lines[headerIdx];
-                  const commaCount = (headerLine.match(/,/g) || []).length;
-                  const semiCount = (headerLine.match(/;/g) || []).length;
-                  const tabCount = (headerLine.match(/\t/g) || []).length;
-                  
-                  let delimiter = ',';
-                  if (tabCount > commaCount && tabCount > semiCount) delimiter = '\t';
-                  else if (semiCount > commaCount) delimiter = ';';
-
-                  const headers = headerLine.split(delimiter).map(h => h.trim().toLowerCase());
-                  
-                  const timeIdx = headers.findIndex(h => h.startsWith('time'));
-                  // BT usually 'BT', 'Bean', 'Temp2'
-                  const btIdx = headers.findIndex(h => h === 'bt' || h.includes('bean') || h === 'temp2');
-                  // ET usually 'ET', 'Env', 'Temp1'
-                  const etIdx = headers.findIndex(h => h === 'et' || h.includes('env') || h === 'temp1');
-                  const eventIdx = headers.findIndex(h => h.includes('event') || h.includes('事件'));
-
-                  if (btIdx === -1) throw new Error("CSV 中未找到豆温(BT)列");
-
-                  for(let i = headerIdx + 1; i < lines.length; i++) {
-                      const line = lines[i].trim();
-                      if (!line) continue;
-                      const parts = line.split(delimiter);
-                      
-                      // Handle Time
-                      let timeVal = 0;
-                      if (timeIdx !== -1) {
-                          const tStr = parts[timeIdx].trim();
-                          if (tStr.includes(':')) {
-                              // mm:ss format
-                              const [m, s] = tStr.split(':').map(Number);
-                              timeVal = (m * 60) + (s || 0);
-                          } else {
-                              timeVal = parseFloat(tStr);
-                          }
-                      } else {
-                          // Fallback time if no column
-                          timeVal = i - headerIdx; 
-                      }
-
-                      const btVal = parseFloat(parts[btIdx]);
-                      const etVal = etIdx !== -1 ? parseFloat(parts[etIdx]) : 0;
-
-                      if (!isNaN(btVal)) {
-                          parsedData.push({
-                              time: isNaN(timeVal) ? 0 : timeVal,
-                              bt: btVal,
-                              et: isNaN(etVal) ? 0 : etVal,
-                              ror: 0, 
-                              et_ror: 0
-                          });
-
-                          // Handle Event
-                          if (eventIdx !== -1 && parts[eventIdx]) {
-                              const evtLabel = parts[eventIdx].trim();
-                              if (evtLabel) {
-                                  // Map English labels to Chinese if needed
-                                  const labelMap: any = { 'CHARGE': '入豆', 'DRY END': '脱水结束', 'FC START': '一爆开始', 'FC END': '一爆结束', 'DROP': '下豆', 'TP': '回温点' };
-                                  // Use mapped label or original (Title Case it maybe?)
-                                  const finalLabel = labelMap[evtLabel.toUpperCase()] || evtLabel;
-                                  parsedEvents.push({
-                                      time: timeVal,
-                                      label: finalLabel,
-                                      temp: btVal
-                                  });
-                              }
-                          }
-                      }
-                  }
+              if (isBackground) {
+                   setBackgroundData(parsedData);
+                   setBackgroundEvents(parsedEvents);
+                   setSuccessMsg(`已加载背景曲线: ${file.name}`);
               } else {
-                  throw new Error("不支持的文件格式");
+                   // Standard Import Mode
+                   // 1. Stop simulations if any
+                   if (isSimulating) toggleSimulation();
+                   
+                   // 2. Set State
+                   setData(parsedData);
+                   dataRef.current = parsedData; // Sync ref
+                   setEvents(parsedEvents);
+                   setStatus(RoastStatus.FINISHED); // View mode
+                   setStartTime(null); // Static
+                   
+                   // 3. Update Display Values to end of roast
+                   if (parsedData.length > 0) {
+                       const last = parsedData[parsedData.length - 1];
+                       setCurrentBT(last.bt);
+                       setCurrentET(last.et);
+                       setCurrentRoR(last.ror);
+                       setCurrentETRoR(last.et_ror || 0);
+                       btRef.current = last.bt;
+                       etRef.current = last.et;
+                   }
+                   setSuccessMsg(`成功导入: ${file.name}`);
               }
-
-              if (parsedData.length === 0) throw new Error("文件为空或解析失败");
-
-              // Post-process: Recalculate RoR
-              const processedData = recalculateRoR(parsedData);
-
-              // Setup app state
-              // 1. Stop simulations if any
-              if (isSimulating) {
-                toggleSimulation();
-              }
-              
-              // 2. Set State
-              setData(processedData);
-              dataRef.current = processedData; // Sync ref
-              setEvents(parsedEvents);
-              setStatus(RoastStatus.FINISHED); // View mode
-              setStartTime(null); // Static
-              
-              // 3. Update Display Values to end of roast
-              if (processedData.length > 0) {
-                  const last = processedData[processedData.length - 1];
-                  setCurrentBT(last.bt);
-                  setCurrentET(last.et);
-                  setCurrentRoR(last.ror);
-                  setCurrentETRoR(last.et_ror || 0);
-                  btRef.current = last.bt;
-                  etRef.current = last.et;
-              }
-
-              setSuccessMsg(`成功导入: ${file.name}`);
 
           } catch (err: any) {
               console.error("Import error", err);
-              setErrorMsg("导入失败: " + (err.message || "文件格式错误"));
+              setErrorMsg((isBackground ? "背景加载失败: " : "导入失败: ") + (err.message || "文件格式错误"));
           } finally {
-              // Reset input
+              // Reset inputs
               if (fileInputRef.current) fileInputRef.current.value = "";
+              if (backgroundInputRef.current) backgroundInputRef.current.value = "";
           }
       };
       reader.readAsText(file);
-  };
-
+  }
 
   // RoR Calculation and Data Recording
   useEffect(() => {
@@ -622,9 +641,6 @@ const App: React.FC = () => {
           const slope = calculateSlope(regressionPointsET);
           calculatedETRoR = slope * 60;
       }
-
-      // Note: Removed EWMA smoothing to match Artisan's pure LS approach. 
-      // The 60s window provides sufficient smoothing.
 
       // Cap extreme values/noise
       if (Math.abs(calculatedRoR) < 0.1) calculatedRoR = 0;
@@ -788,11 +804,18 @@ const App: React.FC = () => {
   return (
     <div className="h-[100dvh] w-full flex flex-col bg-[#1c1c1c] text-[#e0e0e0]">
       
-      {/* Hidden File Input for Import */}
+      {/* Hidden File Inputs */}
       <input 
         type="file" 
         ref={fileInputRef} 
         onChange={handleImportFile} 
+        className="hidden" 
+        accept=".json,.alog,.csv"
+      />
+      <input 
+        type="file" 
+        ref={backgroundInputRef} 
+        onChange={handleBackgroundFile} 
         className="hidden" 
         accept=".json,.alog,.csv"
       />
@@ -891,9 +914,13 @@ const App: React.FC = () => {
                 <Download size={14} className="md:w-4 md:h-4" />
                 <span className="hidden md:inline text-xs">导出</span>
             </button>
-            <button onClick={handleImportClick} className="p-1.5 md:px-2 md:py-1.5 bg-[#333] hover:bg-[#444] text-gray-300 hover:text-white border border-[#555] rounded flex items-center gap-1 transition-colors mr-2" title="导入 Artisan / CSV 文件">
+            <button onClick={handleImportClick} className="p-1.5 md:px-2 md:py-1.5 bg-[#333] hover:bg-[#444] text-gray-300 hover:text-white border border-[#555] rounded flex items-center gap-1 transition-colors" title="导入 Artisan / CSV 文件查看">
                 <Upload size={14} className="md:w-4 md:h-4" />
                 <span className="hidden md:inline text-xs">导入</span>
+            </button>
+            <button onClick={handleBackgroundClick} className="p-1.5 md:px-2 md:py-1.5 bg-[#333] hover:bg-[#444] text-gray-300 hover:text-white border border-[#555] rounded flex items-center gap-1 transition-colors mr-2" title="加载背景曲线 (跟随烘焙)">
+                <FileInput size={14} className="md:w-4 md:h-4" />
+                <span className="hidden md:inline text-xs">背景</span>
             </button>
 
             {status === RoastStatus.IDLE && (
@@ -1027,6 +1054,7 @@ const App: React.FC = () => {
                     currentBT={currentBT}
                     currentET={currentET}
                     currentRoR={currentRoR}
+                    backgroundData={backgroundData}
                 />
             </div>
         </div>

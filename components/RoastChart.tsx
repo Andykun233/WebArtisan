@@ -18,13 +18,18 @@ interface RoastChartProps {
   currentBT: number;
   currentET: number;
   currentRoR: number;
+  backgroundData?: DataPoint[]; // New prop for background curve
 }
 
-const RoastChart: React.FC<RoastChartProps> = ({ data, events, currentBT, currentET, currentRoR }) => {
+const RoastChart: React.FC<RoastChartProps> = ({ data, events, currentBT, currentET, currentRoR, backgroundData = [] }) => {
   // Calculate domains to make chart look nicer, keeping a minimum range
-  // Default to 0-300 if no data, otherwise adaptive
-  const maxTemp = data.length > 0 ? Math.max(...data.map(d => Math.max(d.bt, d.et))) + 20 : 250;
+  // Must consider both current data AND background data to scale axes correctly
+  const allDataPoints = [...data, ...backgroundData];
   
+  const maxTemp = allDataPoints.length > 0 
+    ? Math.max(...allDataPoints.map(d => Math.max(d.bt, d.et))) + 10 
+    : 250;
+
   // --- RoR Analysis: Detect Flicks (Peaks) and Crashes (Valleys) ---
   const rorExtrema = useMemo(() => {
     const points: { time: number; ror: number; type: 'peak' | 'valley' }[] = [];
@@ -79,7 +84,7 @@ const RoastChart: React.FC<RoastChartProps> = ({ data, events, currentBT, curren
       </div>
 
       <ResponsiveContainer width="100%" height="100%">
-        <LineChart data={data} margin={{ top: 20, right: 10, left: 0, bottom: 0 }}>
+        <LineChart margin={{ top: 20, right: 10, left: 0, bottom: 0 }}>
           {/* Artisan Dark Grid */}
           <CartesianGrid strokeDasharray="3 3" stroke="#222" vertical={true} horizontal={true} />
           
@@ -100,7 +105,7 @@ const RoastChart: React.FC<RoastChartProps> = ({ data, events, currentBT, curren
             yAxisId="left" 
             stroke="#888" 
             tick={{fontSize: 10, fill: '#888', fontFamily: 'JetBrains Mono'}}
-            domain={[0, 'auto']}
+            domain={[0, maxTemp]}
             tickCount={8}
             width={35}
           />
@@ -119,12 +124,48 @@ const RoastChart: React.FC<RoastChartProps> = ({ data, events, currentBT, curren
             contentStyle={{ backgroundColor: 'rgba(0,0,0,0.9)', borderColor: '#444', color: '#f1f5f9', fontFamily: 'JetBrains Mono', fontSize: '12px' }}
             itemStyle={{ padding: 0 }}
             labelFormatter={(label) => `时间: ${Math.floor(label / 60)}:${(label % 60).toString().padStart(2, '0')}`}
-            formatter={(value: number) => value.toFixed(1)}
+            formatter={(value: number, name: string) => {
+                if (name.includes('背景')) return [value.toFixed(1), name];
+                return value.toFixed(1);
+            }}
             animationDuration={100}
           />
+
+          {/* --- BACKGROUND LINES (Reference) --- */}
+          {/* Render these first so they appear behind active lines */}
+          {backgroundData.length > 0 && (
+            <>
+               <Line
+                  yAxisId="left"
+                  data={backgroundData}
+                  type="monotone"
+                  dataKey="et"
+                  stroke="#2a4a75" // Muted Blue
+                  strokeWidth={1.5}
+                  strokeDasharray="5 5"
+                  dot={false}
+                  name="背景 ET"
+                  isAnimationActive={false}
+               />
+               <Line
+                  yAxisId="left"
+                  data={backgroundData}
+                  type="monotone"
+                  dataKey="bt"
+                  stroke="#752a2a" // Muted Red
+                  strokeWidth={1.5}
+                  strokeDasharray="5 5"
+                  dot={false}
+                  name="背景 BT"
+                  isAnimationActive={false}
+               />
+            </>
+          )}
           
-          {/* ET Line (Blue) */}
+          {/* --- ACTIVE LINES --- */}
+          {/* Main Data Source */}
           <Line 
+            data={data}
             yAxisId="left"
             type="monotone" 
             dataKey="et" 
@@ -135,8 +176,8 @@ const RoastChart: React.FC<RoastChartProps> = ({ data, events, currentBT, curren
             isAnimationActive={false}
           />
 
-          {/* BT Line (Red) - Rendered after ET to be on top */}
           <Line 
+            data={data}
             yAxisId="left"
             type="monotone" 
             dataKey="bt" 
@@ -147,8 +188,8 @@ const RoastChart: React.FC<RoastChartProps> = ({ data, events, currentBT, curren
             isAnimationActive={false}
           />
 
-          {/* RoR Line (Gold/Yellow) */}
           <Line 
+            data={data}
             yAxisId="right"
             type="monotone" 
             dataKey="ror" 
