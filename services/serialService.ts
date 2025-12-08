@@ -132,7 +132,19 @@ export class TC4SerialService {
         const matches = cleanLine.match(/[-+]?[0-9]*\.?[0-9]+/g);
 
         if (matches) {
-            const numbers = matches.map(parseFloat);
+            let numbers = matches.map(parseFloat);
+
+            // INTELLIGENT FILTERING FOR MULTI-CHANNEL DEVICES
+            // Scenario: Device returns 4 or 8 channels, e.g., "0.00,0.00,29.65,0.00..."
+            // If we detect more than 2 numbers, we try to filter out the 0.00 values 
+            // assuming they are empty/disconnected channels.
+            if (numbers.length > 2) {
+                 const nonZero = numbers.filter(n => Math.abs(n) > 0.001);
+                 // Only apply filter if we found valid data, otherwise keep original (if all are 0)
+                 if (nonZero.length > 0) {
+                     numbers = nonZero;
+                 }
+            }
             
             if (numbers.length >= 2) {
                 // Assuming standard order: BT, ET
