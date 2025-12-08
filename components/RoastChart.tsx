@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import {
   LineChart,
   Line,
@@ -25,6 +25,38 @@ const RoastChart: React.FC<RoastChartProps> = ({ data, events, currentBT, curren
   // Default to 0-300 if no data, otherwise adaptive
   const maxTemp = data.length > 0 ? Math.max(...data.map(d => Math.max(d.bt, d.et))) + 20 : 250;
   
+  // --- RoR Analysis: Detect Flicks (Peaks) and Crashes (Valleys) ---
+  const rorExtrema = useMemo(() => {
+    const points: { time: number; ror: number; type: 'peak' | 'valley' }[] = [];
+    if (data.length < 10) return points;
+
+    // Window size for local extrema detection (2 means look at +/- 2 neighbors, total 5 points window)
+    const window = 2; 
+    
+    // Skip the first 3 minutes (180s) usually to avoid the turning point chaos and initial high RoR
+    const startIndex = data.findIndex(d => d.time > 180);
+    if (startIndex === -1) return points;
+
+    for (let i = startIndex + window; i < data.length - window; i++) {
+        const current = data[i].ror;
+        const prev1 = data[i - 1].ror;
+        const prev2 = data[i - 2].ror;
+        const next1 = data[i + 1].ror;
+        const next2 = data[i + 2].ror;
+
+        // Threshold to ignore micro-jitters (e.g., must be structurally significant)
+        // Check local maximum (Peak/Flick)
+        if (current > prev1 && current > prev2 && current > next1 && current > next2) {
+             points.push({ time: data[i].time, ror: current, type: 'peak' });
+        }
+        // Check local minimum (Valley/Crash)
+        else if (current < prev1 && current < prev2 && current < next1 && current < next2) {
+             points.push({ time: data[i].time, ror: current, type: 'valley' });
+        }
+    }
+    return points;
+  }, [data]);
+
   return (
     <div className="w-full h-full bg-black border border-[#333] relative overflow-hidden rounded-sm shadow-2xl">
       
@@ -160,6 +192,23 @@ const RoastChart: React.FC<RoastChartProps> = ({ data, events, currentBT, curren
                 strokeWidth={1}
             />
           ))}
+
+          {/* RoR Flicks (Peaks) and Crashes (Valleys) Markers */}
+          {rorExtrema.map((point, idx) => (
+             <ReferenceDot
+                key={`ror-extrema-${idx}`}
+                yAxisId="right"
+                x={point.time}
+                y={point.ror}
+                r={3}
+                fill="#1c1c1c" // Dark center
+                stroke={point.type === 'peak' ? '#ff00ff' : '#00ffff'} // Magenta for Peak (Flick), Cyan for Valley (Crash)
+                strokeWidth={2}
+                shape="circle"
+                isFront={true}
+            />
+          ))}
+
         </LineChart>
       </ResponsiveContainer>
     </div>

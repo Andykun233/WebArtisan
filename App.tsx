@@ -1,22 +1,12 @@
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Play, Square, Bluetooth, Thermometer, Clock, AlertCircle, Terminal, RotateCcw, Activity, Loader2, Signal, Undo2, X, Flame, Save, FolderOpen, Trash2, Upload } from 'lucide-react';
+import { Play, Square, Bluetooth, Thermometer, Clock, AlertCircle, Terminal, RotateCcw, Activity, Loader2, Signal, Undo2, X, Flame, Download, Upload } from 'lucide-react';
 import RoastChart from './components/RoastChart';
 import StatCard from './components/StatCard';
 import { TC4BluetoothService } from './services/bluetoothService';
 import { DataPoint, RoastStatus, RoastEvent } from './types';
 
 const bluetoothService = new TC4BluetoothService();
-
-// --- Types for Saved Data ---
-interface SavedRoast {
-  id: string;
-  title: string;
-  date: string;
-  duration: string;
-  data: DataPoint[];
-  events: RoastEvent[];
-}
 
 // --- Utility: Linear Regression for Slope Calculation ---
 // Returns slope (rate of change per unit time)
@@ -48,12 +38,13 @@ function recalculateRoR(data: DataPoint[]): DataPoint[] {
     const EWMA_ALPHA = 0.25;
 
     // We need to simulate the "live" calculation for the whole array
-    return data.map((point, index) => {
+    // First pass: Calculate Raw RoR via Regression
+    const rawData = data.map((point, index) => {
         const currentTime = point.time;
         
         // 1. Calculate BT RoR
         const historyPointsBT = data
-            .slice(Math.max(0, index - 60), index + 1) // Optimization: slice roughly relevant window first
+            .slice(Math.max(0, index - 60), index + 1)
             .filter(d => d.time > currentTime - LOOKBACK_WINDOW && d.time <= currentTime)
             .map(d => ({ time: d.time, value: d.bt }));
 
@@ -72,22 +63,40 @@ function recalculateRoR(data: DataPoint[]): DataPoint[] {
         if (historyPointsET.length >= 2 && (historyPointsET[historyPointsET.length - 1].time - historyPointsET[0].time > 5)) {
              et_ror = calculateSlope(historyPointsET) * 60;
         }
-
-        // 3. Smoothing (Simple approximation of the live EWMA)
-        // Since we are post-processing, we can iterate forward. 
-        // Note: Ideally, this map should be a reduce or imperative loop to carry over previous smoothed value correctly.
-        // For simplicity in map, we just take the raw regression or look at previous point if we wanted strict EWMA.
-        // Let's do a quick local smooth using the previous calculated point in the new array? 
-        // Map doesn't allow easy access to the *newly calculated* previous element.
-        // So we will return raw ROR here and smooth in a second pass if needed, 
-        // OR just return the regression slope which is already quite smooth due to 45s window.
         
-        return {
-            ...point,
-            ror: parseFloat(ror.toFixed(1)),
-            et_ror: parseFloat(et_ror.toFixed(1))
-        };
+        return { ...point, ror, et_ror };
     });
+
+    // Second pass: Apply EWMA Smoothing
+    const smoothedData: DataPoint[] = [];
+    let prevRoR = 0;
+    let prevETRoR = 0;
+
+    for (let i = 0; i < rawData.length; i++) {
+        const p = rawData[i];
+        let newRoR = p.ror;
+        let newETRoR = p.et_ror || 0;
+
+        if (i > 0) {
+            newRoR = (EWMA_ALPHA * p.ror) + ((1 - EWMA_ALPHA) * prevRoR);
+            newETRoR = (EWMA_ALPHA * (p.et_ror || 0)) + ((1 - EWMA_ALPHA) * prevETRoR);
+        }
+
+        // Cap extreme values
+        if (newRoR > 100) newRoR = 100; if (newRoR < -50) newRoR = -50;
+        if (newETRoR > 100) newETRoR = 100; if (newETRoR < -50) newETRoR = -50;
+
+        prevRoR = newRoR;
+        prevETRoR = newETRoR;
+
+        smoothedData.push({
+            ...p,
+            ror: parseFloat(newRoR.toFixed(1)),
+            et_ror: parseFloat(newETRoR.toFixed(1))
+        });
+    }
+
+    return smoothedData;
 }
 
 const App: React.FC = () => {
@@ -121,12 +130,6 @@ const App: React.FC = () => {
   // Undo Drop State
   const [showUndoDrop, setShowUndoDrop] = useState(false);
   const undoTimerRef = useRef<number | null>(null);
-
-  // Load/Save Modal State
-  const [isLoadModalOpen, setIsLoadModalOpen] = useState(false);
-  const [isSaveModalOpen, setIsSaveModalOpen] = useState(false);
-  const [saveTitle, setSaveTitle] = useState("");
-  const [savedRoastsList, setSavedRoastsList] = useState<SavedRoast[]>([]);
 
   // Handlers
   const handleBluetoothConnect = async () => {
@@ -253,110 +256,87 @@ const App: React.FC = () => {
     }
   };
 
-  // --- Save & Load Logic ---
-  const handleOpenSaveModal = () => {
-    if (data.length === 0) {
-        setErrorMsg("没有数据可保存");
-        setTimeout(() => setErrorMsg(null), 3000);
-        return;
-    }
-    const now = new Date();
-    const defaultTitle = `烘焙记录 ${now.toLocaleDateString()} ${now.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}`;
-    setSaveTitle(defaultTitle);
-    setIsSaveModalOpen(true);
-  };
+  // --- Export Logic (CSV) ---
+  const handleExportCSV = () => {
+      if (data.length === 0) {
+          setErrorMsg("没有数据可导出");
+          setTimeout(() => setErrorMsg(null), 3000);
+          return;
+      }
 
-  const handleConfirmSave = () => {
-    if (!saveTitle.trim()) {
-         return; // Simple validation
-    }
+      const now = new Date();
+      const dateStr = now.toLocaleDateString('en-GB').replace(/\//g, '.'); // dd.mm.yyyy format
 
-    const duration = getDuration();
-    const now = new Date();
-    
-    const newRoast: SavedRoast = {
-        id: Date.now().toString(),
-        title: saveTitle.trim(),
-        date: now.toISOString(),
-        duration: duration,
-        data: data,
-        events: events
-    };
+      // 1. Build Header Metadata
+      // Artisan CSV often has header like: Date:.. Unit:C CHARGE:.. TP:..
+      let headerLine = `Date:${dateStr}\tUnit:C`;
+      
+      const labelMap: {[key:string]: string} = { 
+          '入豆': 'CHARGE', '脱水结束': 'DRYe', 
+          '一爆开始': 'FCs', '一爆结束': 'FCe', 
+          '二爆开始': 'SCs', '二爆结束': 'SCe', 
+          '下豆': 'DROP', '回温点': 'TP'
+      };
 
-    try {
-        const existing = localStorage.getItem('webartisan_roasts');
-        const list: SavedRoast[] = existing ? JSON.parse(existing) : [];
-        list.push(newRoast);
-        localStorage.setItem('webartisan_roasts', JSON.stringify(list));
-        
-        setSuccessMsg("保存成功！");
-        setTimeout(() => setSuccessMsg(null), 3000);
-        setIsSaveModalOpen(false);
-    } catch (e) {
-        console.error("Save failed", e);
-        setErrorMsg("保存失败 (可能是存储空间不足)");
-        setTimeout(() => setErrorMsg(null), 3000);
-    }
-  };
+      // Find Charge Time for Time2 calculation
+      const chargeEvent = events.find(e => e.label === '入豆');
+      const chargeTime = chargeEvent ? chargeEvent.time : 0;
 
-  const handleOpenLoadModal = () => {
-      const existing = localStorage.getItem('webartisan_roasts');
-      if (existing) {
-          try {
-             const list = JSON.parse(existing);
-             setSavedRoastsList(Array.isArray(list) ? list.reverse() : []);
-          } catch(e) {
-             setSavedRoastsList([]);
+      // Add events to header
+      events.forEach(e => {
+          const key = labelMap[e.label];
+          if (key) {
+              headerLine += `\t${key}:${formatTime(e.time * 1000)}`;
           }
-      } else {
-          setSavedRoastsList([]);
-      }
-      setIsLoadModalOpen(true);
-  };
+      });
+      // Add Total Duration
+      headerLine += `\tTime:${getDuration()}\n`;
 
-  const handleLoadRoast = (roast: SavedRoast) => {
-      // 1. Stop simulations if any
-      if (isSimulating) {
-        toggleSimulation();
-      }
-      
-      // 2. Set State
-      setData(roast.data);
-      dataRef.current = roast.data; // Sync ref
-      setEvents(roast.events);
-      setStatus(RoastStatus.FINISHED); // View mode
-      setStartTime(null); // Static
-      
-      // 3. Update Display Values to end of roast
-      if (roast.data.length > 0) {
-          const last = roast.data[roast.data.length - 1];
-          setCurrentBT(last.bt);
-          setCurrentET(last.et);
-          setCurrentRoR(last.ror);
-          setCurrentETRoR(last.et_ror || 0);
-          btRef.current = last.bt;
-          etRef.current = last.et;
-      }
+      // 2. Column Headers
+      // Artisan uses Time1 (total), Time2 (since charge), ET, BT, Event
+      const columns = `Time1\tTime2\tET\tBT\tEvent\n`;
 
-      setIsLoadModalOpen(false);
-      setSuccessMsg(`已加载: ${roast.title}`);
+      // 3. Build Rows
+      let rows = '';
+      data.forEach(d => {
+          const time1Str = formatTime(d.time * 1000);
+          
+          // Time2: If Charge exists, Time2 is time since Charge. If before charge, empty or negative.
+          // In standard CSV, usually just empty if irrelevant, or 00:00.
+          let time2Str = '';
+          if (chargeEvent && d.time >= chargeTime) {
+              time2Str = formatTime((d.time - chargeTime) * 1000);
+          } else {
+              time2Str = ''; // Or keep empty
+          }
+
+          // Check for event at this timestamp (fuzzy match < 0.5s)
+          const matchingEvent = events.find(e => Math.abs(e.time - d.time) < 0.5);
+          const eventLabel = matchingEvent 
+              ? (labelMap[matchingEvent.label] || matchingEvent.label) 
+              : '';
+
+          // Format values (Artisan typically allows dots for decimals in CSV if tab separated)
+          const etVal = d.et.toFixed(2);
+          const btVal = d.bt.toFixed(2);
+
+          rows += `${time1Str}\t${time2Str}\t${etVal}\t${btVal}\t${eventLabel}\n`;
+      });
+
+      const csvContent = headerLine + columns + rows;
+
+      // 4. Trigger Download
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', `roast_${now.toISOString().slice(0,10).replace(/-/g,'')}_${now.getHours()}${now.getMinutes()}.csv`);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      
+      setSuccessMsg("导出成功");
       setTimeout(() => setSuccessMsg(null), 3000);
-  };
-
-  const handleDeleteRoast = (id: string, e: React.MouseEvent) => {
-      e.stopPropagation();
-      if (!window.confirm("确定要永久删除这条记录吗？")) return;
-
-      const newList = savedRoastsList.filter(r => r.id !== id);
-      setSavedRoastsList(newList);
-      
-      // Update LocalStorage (Read raw list, filter, save back)
-      const existing = localStorage.getItem('webartisan_roasts');
-      if (existing) {
-          let list: SavedRoast[] = JSON.parse(existing);
-          list = list.filter(r => r.id !== id);
-          localStorage.setItem('webartisan_roasts', JSON.stringify(list));
-      }
   };
 
   // --- Import Logic ---
@@ -381,84 +361,150 @@ const App: React.FC = () => {
                   // JSON / ALOG Parsing
                   const json = JSON.parse(content);
                   
-                  // Helper to safely get value from potential Artisan structure
-                  // Artisan alog typically has: temps: { Bean: [], Environment: [] } ...
-                  // Or sometimes root level properties.
-                  
-                  // Strategy 1: Look for "data" property if it's our own export format
-                  if (json.data && Array.isArray(json.data)) {
-                      parsedData = json.data;
-                      parsedEvents = json.events || [];
-                  } 
-                  // Strategy 2: Try Artisan .alog structure
-                  else if (json.temps) {
-                       const temps = json.temps;
-                       // Assume time is based on sampling rate or explicit 'time' array
-                       // Often Artisan has a 'time' array x-axis
-                       // If not, we assume standard 1s or 3s interval? 
-                       // Let's look for "time" or "x" array
-                       let timeArray: number[] = [];
-                       
-                       // Artisan often uses specific keys. Let's try to be robust.
-                       const btArray = temps.Bean || temps.bean || [];
-                       const etArray = temps.Environment || temps.environment || [];
-                       
-                       // Determine time
-                       // If 'time' array exists in root
-                       if (json.time && Array.isArray(json.time)) {
-                           timeArray = json.time;
-                       } else if (json.x && Array.isArray(json.x)) {
-                           timeArray = json.x;
-                       } else {
-                           // Generate linear time based on length
-                           timeArray = btArray.map((_: any, i: number) => i * 3); // Default 3s? Dangerous. 
-                           // Let's assume 1s if unknown for now, user can scale later if we had that feature.
-                           timeArray = btArray.map((_: any, i: number) => i);
-                       }
+                  // Support standard Artisan "timex", "temp1" (ET/BT), "temp2" (BT) structure
+                  // Or the "temps" object structure
+                  let btArray: number[] = [];
+                  let etArray: number[] = [];
+                  let timeArray: number[] = [];
 
-                       // Map to DataPoint
-                       const len = Math.min(btArray.length, etArray.length);
-                       for(let i=0; i<len; i++) {
-                           parsedData.push({
-                               time: timeArray[i] || i,
-                               bt: btArray[i],
-                               et: etArray[i],
-                               ror: 0, // Recalc later
-                               et_ror: 0
-                           });
-                       }
+                  // 1. Try to extract Temperature Arrays
+                  if (json.temps) {
+                      // Older or detailed format
+                      btArray = json.temps.Bean || json.temps.bean || [];
+                      etArray = json.temps.Environment || json.temps.environment || [];
+                      if (json.temps.x) timeArray = json.temps.x;
                   } else {
-                      throw new Error("无法识别的 JSON 格式");
+                      // Root level structure (Common in newer Artisan exports)
+                      // Usually temp2 is Bean, temp1 is Environment (or user configured)
+                      // If temp2 has data, use it as BT.
+                      btArray = json.temp2 || json.Bean || [];
+                      etArray = json.temp1 || json.Environment || [];
                   }
+
+                  // 2. Try to extract Time Array
+                  if (json.timex && Array.isArray(json.timex)) {
+                      timeArray = json.timex;
+                  } else if (json.time && Array.isArray(json.time)) {
+                      timeArray = json.time;
+                  }
+
+                  // 3. Fallback: If no time, generate from index
+                  if (!timeArray || timeArray.length === 0) {
+                      if (btArray.length > 0) {
+                          const interval = json.samplinginterval || 3.0;
+                          timeArray = btArray.map((_: any, i: number) => i * interval);
+                      } else if (json.data && Array.isArray(json.data)) {
+                          // Our own export format (legacy)
+                          parsedData = json.data;
+                          parsedEvents = json.events || [];
+                      }
+                  }
+
+                  // 4. Construct DataPoints if we parsed arrays
+                  if (parsedData.length === 0 && btArray.length > 0) {
+                      const len = Math.min(btArray.length, timeArray.length);
+                      for(let i = 0; i < len; i++) {
+                          parsedData.push({
+                              time: timeArray[i],
+                              bt: btArray[i],
+                              et: etArray[i] || 0,
+                              ror: 0,
+                              et_ror: 0
+                          });
+                      }
+                  }
+
+                  // 5. Extract Events (Try 'computed' first for standard events)
+                  if (json.computed) {
+                      const c = json.computed;
+                      const eventMapping: {[key:string]: string} = {
+                          'CHARGE_BT': '入豆',
+                          'TP_time': '回温点',
+                          'DRY_time': '脱水结束',
+                          'FCs_time': '一爆开始',
+                          'FCe_time': '一爆结束',
+                          'SCs_time': '二爆开始',
+                          'SCe_time': '二爆结束',
+                          'DROP_time': '下豆'
+                      };
+
+                      // Special handling: 'computed' keys usually store the Value (Temp) or Time
+                      // For times: DRY_time, TP_time, etc.
+                      for (const [key, label] of Object.entries(eventMapping)) {
+                           if (c[key] !== undefined && c[key] > 0) {
+                               // Check if key implies time
+                               if (key.endsWith('_time')) {
+                                   // Find temp at this time
+                                   const t = c[key];
+                                   const closest = parsedData.reduce((prev, curr) => 
+                                      Math.abs(curr.time - t) < Math.abs(prev.time - t) ? curr : prev
+                                   , parsedData[0]);
+                                   
+                                   parsedEvents.push({ time: t, label: label, temp: closest.bt });
+                               }
+                               // CHARGE_BT is a temp, usually happens at time 0 or first index
+                               else if (key === 'CHARGE_BT') {
+                                   parsedEvents.push({ time: 0, label: label, temp: c[key] });
+                               }
+                           }
+                      }
+                  }
+
               } else if (file.name.endsWith('.csv')) {
                   // CSV Parsing
                   const lines = content.split(/\r?\n/);
-                  const headers = lines[0].split(',').map(h => h.trim().toLowerCase());
                   
-                  // Find indices
-                  const timeIdx = headers.findIndex(h => h.includes('time') || h.includes('时间'));
-                  const btIdx = headers.findIndex(h => h.includes('bt') || h.includes('bean') || h.includes('豆温'));
-                  const etIdx = headers.findIndex(h => h.includes('et') || h.includes('env') || h.includes('炉温'));
+                  // 1. Detect Header Line (Look for 'Time' or 'BT')
+                  let headerIdx = -1;
+                  for (let i = 0; i < Math.min(lines.length, 20); i++) {
+                      const lower = lines[i].toLowerCase();
+                      if (lower.includes('time') && (lower.includes('bt') || lower.includes('bean') || lower.includes('temp'))) {
+                          headerIdx = i;
+                          break;
+                      }
+                  }
+                  if (headerIdx === -1) throw new Error("CSV 中未找到表头 (Time/BT)");
+
+                  // 2. Detect Delimiter (comma, semicolon, tab)
+                  const headerLine = lines[headerIdx];
+                  const commaCount = (headerLine.match(/,/g) || []).length;
+                  const semiCount = (headerLine.match(/;/g) || []).length;
+                  const tabCount = (headerLine.match(/\t/g) || []).length;
+                  
+                  let delimiter = ',';
+                  if (tabCount > commaCount && tabCount > semiCount) delimiter = '\t';
+                  else if (semiCount > commaCount) delimiter = ';';
+
+                  const headers = headerLine.split(delimiter).map(h => h.trim().toLowerCase());
+                  
+                  const timeIdx = headers.findIndex(h => h.startsWith('time'));
+                  // BT usually 'BT', 'Bean', 'Temp2'
+                  const btIdx = headers.findIndex(h => h === 'bt' || h.includes('bean') || h === 'temp2');
+                  // ET usually 'ET', 'Env', 'Temp1'
+                  const etIdx = headers.findIndex(h => h === 'et' || h.includes('env') || h === 'temp1');
+                  const eventIdx = headers.findIndex(h => h.includes('event') || h.includes('事件'));
 
                   if (btIdx === -1) throw new Error("CSV 中未找到豆温(BT)列");
 
-                  for(let i=1; i<lines.length; i++) {
+                  for(let i = headerIdx + 1; i < lines.length; i++) {
                       const line = lines[i].trim();
                       if (!line) continue;
-                      const parts = line.split(',');
+                      const parts = line.split(delimiter);
                       
-                      // Safety check length
-                      if (parts.length < 2) continue;
-
-                      const timeStr = timeIdx !== -1 ? parts[timeIdx] : `${i}`; // Default to index if no time
-                      // Handle time format mm:ss if necessary, but assume seconds for simplicity first
-                      // If contains ':', parse.
+                      // Handle Time
                       let timeVal = 0;
-                      if (timeStr.includes(':')) {
-                          const [m, s] = timeStr.split(':').map(Number);
-                          timeVal = (m * 60) + s;
+                      if (timeIdx !== -1) {
+                          const tStr = parts[timeIdx].trim();
+                          if (tStr.includes(':')) {
+                              // mm:ss format
+                              const [m, s] = tStr.split(':').map(Number);
+                              timeVal = (m * 60) + (s || 0);
+                          } else {
+                              timeVal = parseFloat(tStr);
+                          }
                       } else {
-                          timeVal = parseFloat(timeStr);
+                          // Fallback time if no column
+                          timeVal = i - headerIdx; 
                       }
 
                       const btVal = parseFloat(parts[btIdx]);
@@ -466,12 +512,28 @@ const App: React.FC = () => {
 
                       if (!isNaN(btVal)) {
                           parsedData.push({
-                              time: isNaN(timeVal) ? i : timeVal,
+                              time: isNaN(timeVal) ? 0 : timeVal,
                               bt: btVal,
                               et: isNaN(etVal) ? 0 : etVal,
                               ror: 0, 
                               et_ror: 0
                           });
+
+                          // Handle Event
+                          if (eventIdx !== -1 && parts[eventIdx]) {
+                              const evtLabel = parts[eventIdx].trim();
+                              if (evtLabel) {
+                                  // Map English labels to Chinese if needed
+                                  const labelMap: any = { 'CHARGE': '入豆', 'DRY END': '脱水结束', 'FC START': '一爆开始', 'FC END': '一爆结束', 'DROP': '下豆', 'TP': '回温点' };
+                                  // Use mapped label or original (Title Case it maybe?)
+                                  const finalLabel = labelMap[evtLabel.toUpperCase()] || evtLabel;
+                                  parsedEvents.push({
+                                      time: timeVal,
+                                      label: finalLabel,
+                                      temp: btVal
+                                  });
+                              }
+                          }
                       }
                   }
               } else {
@@ -483,17 +545,30 @@ const App: React.FC = () => {
               // Post-process: Recalculate RoR
               const processedData = recalculateRoR(parsedData);
 
-              // Load into app
-              const importRoast: SavedRoast = {
-                  id: `import_${Date.now()}`,
-                  title: `导入: ${file.name}`,
-                  date: new Date().toISOString(),
-                  duration: formatTime(processedData[processedData.length-1].time * 1000),
-                  data: processedData,
-                  events: parsedEvents
-              };
+              // Setup app state
+              // 1. Stop simulations if any
+              if (isSimulating) {
+                toggleSimulation();
+              }
+              
+              // 2. Set State
+              setData(processedData);
+              dataRef.current = processedData; // Sync ref
+              setEvents(parsedEvents);
+              setStatus(RoastStatus.FINISHED); // View mode
+              setStartTime(null); // Static
+              
+              // 3. Update Display Values to end of roast
+              if (processedData.length > 0) {
+                  const last = processedData[processedData.length - 1];
+                  setCurrentBT(last.bt);
+                  setCurrentET(last.et);
+                  setCurrentRoR(last.ror);
+                  setCurrentETRoR(last.et_ror || 0);
+                  btRef.current = last.bt;
+                  etRef.current = last.et;
+              }
 
-              handleLoadRoast(importRoast);
               setSuccessMsg(`成功导入: ${file.name}`);
 
           } catch (err: any) {
@@ -731,7 +806,7 @@ const App: React.FC = () => {
   };
 
   return (
-    <div className="h-screen w-full flex flex-col bg-[#1c1c1c] text-[#e0e0e0]">
+    <div className="h-[100dvh] w-full flex flex-col bg-[#1c1c1c] text-[#e0e0e0]">
       
       {/* Hidden File Input for Import */}
       <input 
@@ -743,7 +818,7 @@ const App: React.FC = () => {
       />
 
       {/* 1. TOP TOOLBAR - Mobile Compact */}
-      <div className="h-12 md:h-14 bg-[#2a2a2a] border-b border-[#333] flex items-center justify-between px-3 md:px-4 shadow-md z-10 shrink-0">
+      <div className="h-10 md:h-14 bg-[#2a2a2a] border-b border-[#333] flex items-center justify-between px-3 md:px-4 shadow-md z-10 shrink-0">
          <div className="flex items-center gap-2 md:gap-4">
             <span className="font-bold text-lg md:text-xl tracking-tighter text-gray-300 flex items-center gap-1.5">
                 <Thermometer className="text-orange-500 w-4 h-4 md:w-6 md:h-6" />
@@ -784,17 +859,13 @@ const App: React.FC = () => {
 
          <div className="flex gap-2 items-center">
             {/* File Operations */}
-            <button onClick={handleOpenSaveModal} className="p-1.5 md:px-2 md:py-1.5 bg-[#333] hover:bg-[#444] text-gray-300 hover:text-white border border-[#555] rounded flex items-center gap-1 transition-colors" title="保存记录">
-                <Save size={14} className="md:w-4 md:h-4" />
-                <span className="hidden md:inline text-xs">保存</span>
+            <button onClick={handleExportCSV} className="p-1.5 md:px-2 md:py-1.5 bg-[#333] hover:bg-[#444] text-gray-300 hover:text-white border border-[#555] rounded flex items-center gap-1 transition-colors" title="导出 CSV">
+                <Download size={14} className="md:w-4 md:h-4" />
+                <span className="hidden md:inline text-xs">导出</span>
             </button>
-            <button onClick={handleImportClick} className="p-1.5 md:px-2 md:py-1.5 bg-[#333] hover:bg-[#444] text-gray-300 hover:text-white border border-[#555] rounded flex items-center gap-1 transition-colors" title="导入 Artisan / CSV 文件">
+            <button onClick={handleImportClick} className="p-1.5 md:px-2 md:py-1.5 bg-[#333] hover:bg-[#444] text-gray-300 hover:text-white border border-[#555] rounded flex items-center gap-1 transition-colors mr-2" title="导入 Artisan / CSV 文件">
                 <Upload size={14} className="md:w-4 md:h-4" />
                 <span className="hidden md:inline text-xs">导入</span>
-            </button>
-            <button onClick={handleOpenLoadModal} className="p-1.5 md:px-2 md:py-1.5 bg-[#333] hover:bg-[#444] text-gray-300 hover:text-white border border-[#555] rounded flex items-center gap-1 transition-colors mr-2" title="加载记录">
-                <FolderOpen size={14} className="md:w-4 md:h-4" />
-                <span className="hidden md:inline text-xs">加载</span>
             </button>
 
             {status === RoastStatus.IDLE && (
@@ -878,91 +949,6 @@ const App: React.FC = () => {
             </div>
         )}
 
-        {/* Save Modal */}
-        {isSaveModalOpen && (
-            <div className="absolute inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-                 <div className="bg-[#1c1c1c] border border-[#444] rounded-lg shadow-2xl w-full max-w-sm p-4 flex flex-col gap-4 animate-in zoom-in-95 duration-200">
-                    <h3 className="text-white font-bold flex items-center gap-2">
-                        <Save size={18} className="text-green-500"/> 保存烘焙记录
-                    </h3>
-                    
-                    <div className="flex flex-col gap-1">
-                        <label className="text-xs text-gray-500 uppercase font-bold">记录名称</label>
-                        <input 
-                            type="text" 
-                            value={saveTitle}
-                            onChange={(e) => setSaveTitle(e.target.value)}
-                            onKeyDown={(e) => {
-                                if (e.key === 'Enter') handleConfirmSave();
-                                if (e.key === 'Escape') setIsSaveModalOpen(false);
-                            }}
-                            className="bg-[#111] border border-[#333] text-white p-2 rounded focus:border-blue-500 outline-none font-mono text-sm"
-                            autoFocus
-                        />
-                    </div>
-
-                    <div className="flex gap-2 justify-end mt-2">
-                        <button 
-                            onClick={() => setIsSaveModalOpen(false)}
-                            className="px-3 py-1.5 text-xs font-bold text-gray-400 hover:text-white hover:bg-[#333] rounded"
-                        >
-                            取消
-                        </button>
-                        <button 
-                            onClick={handleConfirmSave}
-                            className="px-3 py-1.5 text-xs font-bold bg-green-600 hover:bg-green-700 text-white rounded"
-                        >
-                            确认保存
-                        </button>
-                    </div>
-                 </div>
-            </div>
-        )}
-
-        {/* Load Modal */}
-        {isLoadModalOpen && (
-            <div className="absolute inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-                <div className="bg-[#1c1c1c] border border-[#444] rounded-lg shadow-2xl w-full max-w-lg max-h-[80vh] flex flex-col animate-in zoom-in-95 duration-200">
-                    <div className="flex items-center justify-between p-4 border-b border-[#333]">
-                        <h3 className="text-white font-bold flex items-center gap-2">
-                            <FolderOpen size={18} className="text-orange-500"/> 加载烘焙记录
-                        </h3>
-                        <button onClick={() => setIsLoadModalOpen(false)} className="text-gray-400 hover:text-white">
-                            <X size={20} />
-                        </button>
-                    </div>
-                    <div className="flex-1 overflow-y-auto p-2 custom-scrollbar">
-                        {savedRoastsList.length === 0 ? (
-                            <div className="text-center py-10 text-gray-500 italic">没有找到已保存的记录</div>
-                        ) : (
-                            <div className="flex flex-col gap-2">
-                                {savedRoastsList.map((roast) => (
-                                    <div key={roast.id} className="bg-[#222] hover:bg-[#2a2a2a] border border-[#333] rounded p-3 flex items-center justify-between group transition-colors cursor-pointer" onClick={() => handleLoadRoast(roast)}>
-                                        <div className="flex flex-col">
-                                            <span className="text-sm font-bold text-gray-200 group-hover:text-white">{roast.title}</span>
-                                            <div className="flex gap-3 text-xs text-gray-500 font-mono mt-1">
-                                                <span>时长: {roast.duration}</span>
-                                                <span>点数: {roast.data.length}</span>
-                                            </div>
-                                        </div>
-                                        <div className="flex items-center gap-2">
-                                            <button 
-                                                onClick={(e) => handleDeleteRoast(roast.id, e)}
-                                                className="p-2 text-gray-600 hover:text-red-500 transition-colors rounded hover:bg-red-900/20"
-                                                title="删除"
-                                            >
-                                                <Trash2 size={16} />
-                                            </button>
-                                        </div>
-                                    </div>
-                                ))}
-                            </div>
-                        )}
-                    </div>
-                </div>
-            </div>
-        )}
-
         {/* DESKTOP LEFT SIDEBAR: Large LCD Displays - HIDDEN ON MOBILE */}
         <div className="
             hidden md:flex w-64 bg-[#222] border-r border-[#333] p-3 
@@ -984,25 +970,25 @@ const App: React.FC = () => {
         <div className="flex-1 bg-[#1a1a1a] flex flex-col relative min-h-0">
             
             {/* MOBILE ONLY: Slim Data Ticker */}
-            <div className="md:hidden h-12 bg-black border-b border-[#333] flex items-center justify-around px-2 shrink-0 shadow-lg z-10">
+            <div className="md:hidden h-10 bg-black border-b border-[#333] flex items-center justify-around px-2 shrink-0 shadow-lg z-10">
                <div className="flex flex-col items-center">
                   <span className="text-[9px] text-gray-500 font-bold uppercase tracking-wide">BT 豆温</span>
-                  <span className="text-xl font-mono font-bold text-[#ff4d4d] leading-none">{currentBT.toFixed(1)}</span>
+                  <span className="text-lg font-mono font-bold text-[#ff4d4d] leading-none">{currentBT.toFixed(1)}</span>
                </div>
                <div className="w-px h-6 bg-[#333]"></div>
                <div className="flex flex-col items-center">
                   <span className="text-[9px] text-gray-500 font-bold uppercase tracking-wide">ET 炉温</span>
-                  <span className="text-xl font-mono font-bold text-[#4d94ff] leading-none">{currentET.toFixed(1)}</span>
+                  <span className="text-lg font-mono font-bold text-[#4d94ff] leading-none">{currentET.toFixed(1)}</span>
                </div>
                <div className="w-px h-6 bg-[#333]"></div>
                <div className="flex flex-col items-center">
                   <span className="text-[9px] text-gray-500 font-bold uppercase tracking-wide">RoR</span>
-                  <span className="text-xl font-mono font-bold text-[#ffd700] leading-none">{currentRoR.toFixed(1)}</span>
+                  <span className="text-lg font-mono font-bold text-[#ffd700] leading-none">{currentRoR.toFixed(1)}</span>
                </div>
                <div className="w-px h-6 bg-[#333]"></div>
-               <div className="flex flex-col items-center w-16">
+               <div className="flex flex-col items-center w-14">
                   <span className="text-[9px] text-gray-500 font-bold uppercase tracking-wide">时间</span>
-                  <span className="text-sm font-mono font-bold text-[#39ff14] leading-none mt-1">{getDuration()}</span>
+                  <span className="text-xs font-mono font-bold text-[#39ff14] leading-none mt-1">{getDuration()}</span>
                </div>
             </div>
 
@@ -1038,7 +1024,7 @@ const App: React.FC = () => {
                             onClick={btn.action}
                             disabled={status !== RoastStatus.ROASTING || btn.disabled}
                             className={`
-                                w-full py-3 md:py-3 font-bold text-[11px] md:text-xs rounded-sm transition-all border select-none active:scale-95 touch-manipulation
+                                w-full py-2 md:py-3 font-bold text-[10px] md:text-xs rounded-sm transition-all border select-none active:scale-95 touch-manipulation
                                 ${status !== RoastStatus.ROASTING || btn.disabled 
                                     ? 'bg-[#2a2a2a] text-gray-600 border-transparent' 
                                     : isActive 
