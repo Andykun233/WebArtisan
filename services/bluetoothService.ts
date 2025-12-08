@@ -99,19 +99,24 @@ export class TC4BluetoothService {
   private startPolling() {
      if (this.pollingInterval) clearInterval(this.pollingInterval);
      
-     // Send READ command every second according to TC4 protocol
-     // Using CRLF (\r\n) instead of just \n for better compatibility
-     this.pollingInterval = setInterval(async () => {
+     const sendCommand = async () => {
         if (this.server?.connected && this.txChar) {
             try {
-                await this.txChar.writeValue(this.textEncoder.encode("READ\r\n"));
+                // Send READ command with just \n
+                await this.txChar.writeValue(this.textEncoder.encode("READ\n"));
             } catch (e) {
                 console.warn("Failed to write READ command", e);
             }
         } else {
             if (this.pollingInterval) clearInterval(this.pollingInterval);
         }
-     }, 1000) as any;
+     };
+
+     // Execute immediately to get data right away
+     sendCommand();
+     
+     // Schedule interval
+     this.pollingInterval = setInterval(sendCommand, 1000) as any;
   }
 
   private handleNotifications = (event: Event) => {

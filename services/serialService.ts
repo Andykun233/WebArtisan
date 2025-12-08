@@ -58,18 +58,23 @@ export class TC4SerialService {
   private startPolling() {
      if (this.pollingInterval) clearInterval(this.pollingInterval);
      
-     this.pollingInterval = setInterval(async () => {
+     const sendCommand = async () => {
         if (this.port?.writable && !this.port.writable.locked) {
             try {
                 const writer = this.port.writable.getWriter();
-                // Send READ with CRLF for maximum compatibility
-                await writer.write(this.textEncoder.encode("READ\r\n"));
+                // Send READ with just \n to avoid "phantom space" caused by \r on some Arduinos
+                await writer.write(this.textEncoder.encode("READ\n"));
                 writer.releaseLock();
             } catch (e) {
                 console.warn("Failed to write READ command", e);
             }
         }
-     }, 1000) as any;
+     };
+
+     // Execute immediately to get data right away
+     sendCommand();
+
+     this.pollingInterval = setInterval(sendCommand, 1000) as any;
   }
 
   private async readLoop() {
