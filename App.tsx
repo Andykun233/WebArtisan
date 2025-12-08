@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Play, Square, Bluetooth, Thermometer, Clock, AlertCircle, Terminal, RotateCcw, Activity, Loader2, Signal, Undo2, X, Flame, Download, Upload, FileInput } from 'lucide-react';
 import RoastChart from './components/RoastChart';
@@ -871,7 +870,7 @@ const App: React.FC = () => {
       {/* 1. TOP TOOLBAR - Mobile Compact */}
       <div className="h-10 md:h-14 bg-[#2a2a2a] border-b border-[#333] flex items-center justify-between px-3 md:px-4 shadow-md z-10 shrink-0">
          <div className="flex items-center gap-2 md:gap-4">
-            <span className="font-bold text-lg md:text-xl tracking-tighter text-gray-300 flex items-center gap-1.5">
+            <span className="font-bold text-base md:text-xl tracking-tighter text-gray-300 flex items-center gap-1.5">
                 <Thermometer className="text-orange-500 w-4 h-4 md:w-6 md:h-6" />
                 <span className="hidden xs:inline">WEB</span><span className="text-orange-500">ARTISAN</span>
             </span>
@@ -908,7 +907,7 @@ const App: React.FC = () => {
             </div>
          </div>
 
-         <div className="flex gap-2 items-center">
+         <div className="flex gap-1.5 md:gap-2 items-center">
             {/* File Operations */}
             <button onClick={handleOpenExportModal} className="p-1.5 md:px-2 md:py-1.5 bg-[#333] hover:bg-[#444] text-gray-300 hover:text-white border border-[#555] rounded flex items-center gap-1 transition-colors" title="导出 CSV">
                 <Download size={14} className="md:w-4 md:h-4" />
@@ -918,7 +917,7 @@ const App: React.FC = () => {
                 <Upload size={14} className="md:w-4 md:h-4" />
                 <span className="hidden md:inline text-xs">导入</span>
             </button>
-            <button onClick={handleBackgroundClick} className="p-1.5 md:px-2 md:py-1.5 bg-[#333] hover:bg-[#444] text-gray-300 hover:text-white border border-[#555] rounded flex items-center gap-1 transition-colors mr-2" title="加载背景曲线 (跟随烘焙)">
+            <button onClick={handleBackgroundClick} className="p-1.5 md:px-2 md:py-1.5 bg-[#333] hover:bg-[#444] text-gray-300 hover:text-white border border-[#555] rounded flex items-center gap-1 transition-colors mr-1 md:mr-2" title="加载背景曲线 (跟随烘焙)">
                 <FileInput size={14} className="md:w-4 md:h-4" />
                 <span className="hidden md:inline text-xs">背景</span>
             </button>
@@ -926,32 +925,32 @@ const App: React.FC = () => {
             {status === RoastStatus.IDLE && (
                  <>
                  <button onClick={toggleSimulation} className="px-2 py-1 bg-[#333] hover:bg-[#444] border border-[#555] rounded text-[10px] md:text-xs text-gray-300 font-mono">
-                   {isSimulating ? '停止模拟' : '模拟'}
+                   {isSimulating ? '停止' : '模拟'}
                  </button>
                  <button 
                     onClick={handleBluetoothConnect} 
                     disabled={isConnecting}
-                    className="px-3 py-1.5 bg-[#005fb8] hover:bg-[#0070d8] disabled:bg-[#004080] text-white rounded font-bold text-xs md:text-sm flex items-center gap-1 border border-blue-400/20 transition-all"
+                    className="px-2 py-1.5 md:px-3 bg-[#005fb8] hover:bg-[#0070d8] disabled:bg-[#004080] text-white rounded font-bold text-xs md:text-sm flex items-center gap-1 border border-blue-400/20 transition-all"
                  >
                     {isConnecting ? (
                         <Loader2 size={14} className="animate-spin md:w-4 md:h-4" />
                     ) : (
                         <Bluetooth size={14} className="md:w-4 md:h-4" />
                     )}
-                    <span className="inline">{isConnecting ? '连接中...' : '连接'}</span>
+                    <span className="inline">{isConnecting ? '...' : '连接'}</span>
                 </button>
                 </>
             )}
 
             {/* Show START button when Connected or Preheating */}
             {(status === RoastStatus.CONNECTED || status === RoastStatus.PREHEATING) && (
-                 <button onClick={handleStartRoast} className="px-4 py-1.5 bg-[#2da44e] hover:bg-[#2c974b] text-white rounded font-bold text-xs md:text-sm flex items-center gap-1 border border-green-400/20 shadow-[0_0_10px_rgba(45,164,78,0.4)]">
+                 <button onClick={handleStartRoast} className="px-3 md:px-4 py-1.5 bg-[#2da44e] hover:bg-[#2c974b] text-white rounded font-bold text-xs md:text-sm flex items-center gap-1 border border-green-400/20 shadow-[0_0_10px_rgba(45,164,78,0.4)]">
                    <Play size={14} className="md:w-4 md:h-4" /> 开始
                </button>
             )}
 
             {status === RoastStatus.ROASTING && (
-                 <button onClick={handleStopRoast} className="px-4 py-1.5 bg-[#cf222e] hover:bg-[#a40e26] text-white rounded font-bold text-xs md:text-sm flex items-center gap-1 border border-red-400/20 shadow-[0_0_10px_rgba(207,34,46,0.4)]">
+                 <button onClick={handleStopRoast} className="px-3 md:px-4 py-1.5 bg-[#cf222e] hover:bg-[#a40e26] text-white rounded font-bold text-xs md:text-sm flex items-center gap-1 border border-red-400/20 shadow-[0_0_10px_rgba(207,34,46,0.4)]">
                    <Square size={14} className="md:w-4 md:h-4" /> 下豆
                </button>
             )}
@@ -977,7 +976,7 @@ const App: React.FC = () => {
       )}
 
       {/* 2. MAIN WORKSPACE */}
-      <div className="flex-1 flex flex-col md:flex-row overflow-hidden relative">
+      <div className="flex-1 flex flex-col md:flex-row overflow-hidden relative min-h-0">
         
         {/* Undo Drop Toast */}
         {showUndoDrop && (
@@ -1026,19 +1025,19 @@ const App: React.FC = () => {
             
             {/* MOBILE ONLY: Slim Data Ticker */}
             <div className="md:hidden h-10 bg-black border-b border-[#333] flex items-center justify-around px-2 shrink-0 shadow-lg z-10">
-               <div className="flex flex-col items-center">
+               <div className="flex flex-col items-center w-16">
                   <span className="text-[9px] text-gray-500 font-bold uppercase tracking-wide">BT 豆温</span>
-                  <span className="text-lg font-mono font-bold text-[#ff4d4d] leading-none">{currentBT.toFixed(1)}</span>
+                  <span className="text-base font-mono font-bold text-[#ff4d4d] leading-none">{currentBT.toFixed(1)}</span>
                </div>
                <div className="w-px h-6 bg-[#333]"></div>
-               <div className="flex flex-col items-center">
+               <div className="flex flex-col items-center w-16">
                   <span className="text-[9px] text-gray-500 font-bold uppercase tracking-wide">ET 炉温</span>
-                  <span className="text-lg font-mono font-bold text-[#4d94ff] leading-none">{currentET.toFixed(1)}</span>
+                  <span className="text-base font-mono font-bold text-[#4d94ff] leading-none">{currentET.toFixed(1)}</span>
                </div>
                <div className="w-px h-6 bg-[#333]"></div>
-               <div className="flex flex-col items-center">
+               <div className="flex flex-col items-center w-12">
                   <span className="text-[9px] text-gray-500 font-bold uppercase tracking-wide">RoR</span>
-                  <span className="text-lg font-mono font-bold text-[#ffd700] leading-none">{currentRoR.toFixed(1)}</span>
+                  <span className="text-base font-mono font-bold text-[#ffd700] leading-none">{currentRoR.toFixed(1)}</span>
                </div>
                <div className="w-px h-6 bg-[#333]"></div>
                <div className="flex flex-col items-center w-14">
@@ -1047,7 +1046,7 @@ const App: React.FC = () => {
                </div>
             </div>
 
-            <div className="flex-1 p-0 md:p-1 md:pb-0 relative">
+            <div className="flex-1 p-0 md:p-1 md:pb-0 relative min-h-0">
                 <RoastChart 
                     data={data} 
                     events={events} 
@@ -1069,8 +1068,8 @@ const App: React.FC = () => {
              <div className="hidden md:block text-xs font-bold text-gray-500 uppercase tracking-widest mb-1 text-center">事件标记</div>
              
              {/* Mobile: Grid Layout for Buttons */}
-             {/* Using grid-cols-3 is good, but let's make them slightly shorter vertically on mobile to save space */}
-             <div className="grid grid-cols-3 md:flex md:flex-col gap-2 mb-safe-offset">
+             {/* Optimized for minimal height on mobile to allow chart space */}
+             <div className="grid grid-cols-3 md:flex md:flex-col gap-1.5 md:gap-2 mb-safe-offset">
                  {eventButtons.map((btn, idx) => {
                      const isActive = hasEvent(btn.label);
                      
@@ -1080,7 +1079,7 @@ const App: React.FC = () => {
                             onClick={btn.action}
                             disabled={status !== RoastStatus.ROASTING || btn.disabled}
                             className={`
-                                w-full py-2 md:py-3 font-bold text-[10px] md:text-xs rounded-sm transition-all border select-none active:scale-95 touch-manipulation
+                                w-full py-2.5 md:py-3 font-bold text-[10px] md:text-xs rounded-sm transition-all border select-none active:scale-95 touch-manipulation
                                 ${status !== RoastStatus.ROASTING || btn.disabled 
                                     ? 'bg-[#2a2a2a] text-gray-600 border-transparent' 
                                     : isActive 

@@ -13,6 +13,10 @@
         color: #e0e0e0;
         overflow: hidden; /* App-like feel */
         touch-action: manipulation; /* Improves touch response */
+        height: 100%;
+      }
+      html {
+        height: 100%;
       }
       .font-mono {
         font-family: 'JetBrains Mono', monospace;
@@ -39,6 +43,14 @@
       .no-scrollbar {
         -ms-overflow-style: none;
         scrollbar-width: none;
+      }
+
+      /* iOS Safe Area Utilities */
+      .pb-safe {
+        padding-bottom: env(safe-area-inset-bottom);
+      }
+      .mb-safe-offset {
+        margin-bottom: env(safe-area-inset-bottom);
       }
     </style>
   <script type="importmap">
