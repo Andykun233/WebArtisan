@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Play, Square, Bluetooth, Thermometer, Clock, AlertCircle, Terminal, RotateCcw, Activity, Loader2, Signal, Undo2, X, Flame, Download, Upload, FileInput, Usb } from 'lucide-react';
+import { Play, Square, Bluetooth, Thermometer, AlertCircle, Terminal, RotateCcw, Loader2, Signal, Undo2, X, Download, Upload, FileInput, Usb, Bug } from 'lucide-react';
 import RoastChart from './components/RoastChart';
 import StatCard from './components/StatCard';
 import { TC4BluetoothService } from './services/bluetoothService';
@@ -282,6 +282,11 @@ const App: React.FC = () => {
   const [currentRoR, setCurrentRoR] = useState<number>(0.0);
   const [currentETRoR, setCurrentETRoR] = useState<number>(0.0);
 
+  // Debugging
+  const [showRawLog, setShowRawLog] = useState(false);
+  const [rawLogs, setRawLogs] = useState<string[]>([]);
+  const rawLogsRef = useRef<string[]>([]);
+
   // Refs for stable access inside intervals without triggering re-renders
   const btRef = useRef(20.0);
   const etRef = useRef(20.0);
@@ -317,6 +322,16 @@ const App: React.FC = () => {
     setCurrentET(et);
   }, []);
 
+  const handleRawData = useCallback((raw: string) => {
+      // Append to raw logs for debugging
+      const timestamp = new Date().toLocaleTimeString().split(' ')[0];
+      const logLine = `[${timestamp}] ${raw.trim()}`;
+      
+      // Limit log size to last 50 lines to prevent memory issues
+      rawLogsRef.current = [logLine, ...rawLogsRef.current].slice(0, 50);
+      setRawLogs([...rawLogsRef.current]);
+  }, []);
+
   const handleDisconnect = useCallback(() => {
      setStatus(RoastStatus.IDLE);
      setIsSimulating(false);
@@ -328,9 +343,13 @@ const App: React.FC = () => {
   // Handlers
   const handleBluetoothConnect = async () => {
     setIsConnecting(true);
+    setRawLogs([]);
+    rawLogsRef.current = [];
+    
     try {
       setErrorMsg(null);
-      const name = await bluetoothService.connect(handleDataUpdate, handleDisconnect);
+      // Now passing handleRawData to service
+      const name = await bluetoothService.connect(handleDataUpdate, handleDisconnect, handleRawData);
       setDeviceName(name);
       setActiveService('bluetooth');
       setStatus(RoastStatus.PREHEATING); // Go directly to Preheating after connection
@@ -344,10 +363,12 @@ const App: React.FC = () => {
 
   const handleSerialConnect = async () => {
       setIsConnecting(true);
+      setRawLogs([]);
+      rawLogsRef.current = [];
       
       // Prompt for Baud Rate
       let baudRate = 115200;
-      const input = window.prompt("请输入波特率 (Baud Rate)\n默认: 115200 (TC4/Artisan)\nHC-05/06 常见值: 9600", "115200");
+      const input = window.prompt("请输入波特率 (Baud Rate)\n默认: 115200 (TC4/Artisan)\nHC-05/06: 9600 \n其他: 57600, 38400", "115200");
       
       if (input === null) {
           setIsConnecting(false);
@@ -365,7 +386,8 @@ const App: React.FC = () => {
 
       try {
         setErrorMsg(null);
-        const name = await serialService.connect(handleDataUpdate, handleDisconnect, baudRate);
+        // Now passing handleRawData to service
+        const name = await serialService.connect(handleDataUpdate, handleDisconnect, baudRate, handleRawData);
         setDeviceName(name);
         setActiveService('serial');
         setStatus(RoastStatus.PREHEATING);
@@ -1161,33 +1183,66 @@ const App: React.FC = () => {
                  })}
              </div>
 
+             {/* Event Log / Debug Terminal */}
              <div className="mt-auto border-t border-[#333] pt-3 hidden md:flex flex-col gap-2">
-                 <div className="text-[10px] font-bold text-[#666] uppercase tracking-wider flex items-center gap-2 px-1">
-                    <Terminal size={10} /> 事件日志 (LOG)
+                 <div className="text-[10px] font-bold text-[#666] uppercase tracking-wider flex items-center justify-between px-1">
+                    <span className="flex items-center gap-2">
+                        {showRawLog ? <Bug size={10} className="text-orange-500" /> : <Terminal size={10} />}
+                        {showRawLog ? "原始数据 (RAW)" : "事件日志 (LOG)"}
+                    </span>
+                    <button 
+                        onClick={() => setShowRawLog(!showRawLog)} 
+                        className="text-[9px] px-1.5 py-0.5 bg-[#333] hover:bg-[#444] rounded text-gray-400"
+                        title="切换视图"
+                    >
+                        {showRawLog ? "查看事件" : "查看数据"}
+                    </button>
                  </div>
+                 
                  <div className="h-48 bg-[#0a0a0a] border border-[#333] rounded-sm overflow-y-auto custom-scrollbar shadow-inner relative">
-                    {events.length === 0 && (
-                        <div className="absolute inset-0 flex items-center justify-center text-[#333] text-[10px] italic">
-                            等待记录...
-                        </div>
-                    )}
-                    <div className="flex flex-col">
-                        {events.map((e, i) => (
-                            <div key={i} className="flex items-center justify-between p-2 border-b border-[#1c1c1c] hover:bg-[#111] transition-colors group">
-                                <div className="flex flex-col">
-                                    <span className="text-[#e0e0e0] font-bold text-[10px] group-hover:text-white transition-colors">
-                                        {e.label}
-                                    </span>
-                                    <span className="text-[#444] text-[9px] group-hover:text-[#666] transition-colors font-mono">
-                                        @ {e.temp.toFixed(1)}°C
+                    
+                    {/* View: Events List */}
+                    {!showRawLog && (
+                        <>
+                        {events.length === 0 && (
+                            <div className="absolute inset-0 flex items-center justify-center text-[#333] text-[10px] italic">
+                                等待记录...
+                            </div>
+                        )}
+                        <div className="flex flex-col">
+                            {events.map((e, i) => (
+                                <div key={i} className="flex items-center justify-between p-2 border-b border-[#1c1c1c] hover:bg-[#111] transition-colors group">
+                                    <div className="flex flex-col">
+                                        <span className="text-[#e0e0e0] font-bold text-[10px] group-hover:text-white transition-colors">
+                                            {e.label}
+                                        </span>
+                                        <span className="text-[#444] text-[9px] group-hover:text-[#666] transition-colors font-mono">
+                                            @ {e.temp.toFixed(1)}°C
+                                        </span>
+                                    </div>
+                                    <span className="text-[#007acc] font-mono text-[10px] bg-[#007acc]/10 px-1.5 py-0.5 rounded border border-[#007acc]/20">
+                                        {formatTime(e.time * 1000)}
                                     </span>
                                 </div>
-                                <span className="text-[#007acc] font-mono text-[10px] bg-[#007acc]/10 px-1.5 py-0.5 rounded border border-[#007acc]/20">
-                                    {formatTime(e.time * 1000)}
-                                </span>
-                            </div>
-                        )).reverse()}
-                    </div>
+                            )).reverse()}
+                        </div>
+                        </>
+                    )}
+
+                    {/* View: Raw Data Log */}
+                    {showRawLog && (
+                        <div className="flex flex-col p-2 font-mono text-[10px] text-gray-400">
+                             {rawLogs.length === 0 && (
+                                <div className="text-center italic text-[#333] mt-10">暂无数据...<br/>请连接设备</div>
+                            )}
+                            {rawLogs.map((log, i) => (
+                                <div key={i} className="border-b border-[#1c1c1c] py-0.5 break-all">
+                                    {log}
+                                </div>
+                            ))}
+                        </div>
+                    )}
+
                  </div>
              </div>
         </div>

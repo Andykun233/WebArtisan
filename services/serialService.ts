@@ -4,18 +4,26 @@ export class TC4SerialService {
   private port: any | null = null;
   private reader: any | null = null;
   private onDataCallback: ((bt: number, et: number) => void) | null = null;
+  private onRawCallback: ((data: string) => void) | null = null;
   private onDisconnectCallback: (() => void) | null = null;
   private textDecoder = new TextDecoder();
   private textEncoder = new TextEncoder();
   private buffer = "";
   private pollingInterval: number | null = null;
   private isReading = false;
+  private lastET = 20.0; // Cache to handle single-channel devices
 
   constructor() {}
 
-  async connect(onData: (bt: number, et: number) => void, onDisconnect: () => void, baudRate: number = 115200): Promise<string> {
+  async connect(
+      onData: (bt: number, et: number) => void, 
+      onDisconnect: () => void, 
+      baudRate: number = 115200,
+      onRaw?: (data: string) => void
+  ): Promise<string> {
     this.onDataCallback = onData;
     this.onDisconnectCallback = onDisconnect;
+    this.onRawCallback = onRaw || null;
 
     const nav = navigator as any;
     if (!nav.serial) {
@@ -76,8 +84,10 @@ export class TC4SerialService {
             }
             if (value) {
                 const chunk = this.textDecoder.decode(value);
-                // Debug log to help users check baud rate issues
-                // console.debug("Raw Serial Data:", chunk); 
+                // Send raw data to UI for debugging
+                if (this.onRawCallback) {
+                    this.onRawCallback(chunk);
+                }
                 this.handleData(chunk);
             }
           }
@@ -97,45 +107,40 @@ export class TC4SerialService {
       const parts = this.buffer.split(/[\r\n]+/);
       
       // The last part is likely incomplete, keep it in buffer
-      // Note: If buffer ends exactly with newline, pop() is empty string, which is fine.
       this.buffer = parts.pop() || "";
       
       for (const line of parts) {
           if (line.trim()) {
-              this.parseTC4String(line);
+              this.parseGreedy(line);
           }
       }
     }
   }
 
-  private parseTC4String(line: string) {
-    // Expected formats: 
-    // "CHAN1,CHAN2,..."
-    // "PROFILER,TIME,BT,ET,..."
+  private parseGreedy(line: string) {
     try {
         const cleanLine = line.trim();
-        // Ignore empty or comment lines
         if (!cleanLine || cleanLine.startsWith('#')) return;
 
-        const parts = cleanLine.split(',');
-        
-        let bt: number = NaN;
-        let et: number = NaN;
+        // Greedy Regex: Find any sequence that looks like a number (integer or float)
+        // e.g. "Temp: 150.5, Env: 200" -> matches ["150.5", "200"]
+        const matches = cleanLine.match(/[-+]?[0-9]*\.?[0-9]+/g);
 
-        if (parts.length >= 4 && parts[0] === 'PROFILER') {
-             // Handle some Artisan formats: PROFILER, time, bt, et
-             bt = parseFloat(parts[2]);
-             et = parseFloat(parts[3]);
-        } else if (parts.length >= 2) {
-             // Standard TC4: BT, ET
-             bt = parseFloat(parts[0]);
-             et = parseFloat(parts[1]);
-        }
-
-        if (!isNaN(bt) && !isNaN(et) && this.onDataCallback) {
-             this.onDataCallback(bt, et);
-        } else {
-             console.debug("Unparseable line:", line);
+        if (matches) {
+            const numbers = matches.map(parseFloat);
+            
+            if (numbers.length >= 2) {
+                // Assuming standard order: BT, ET
+                const bt = numbers[0];
+                const et = numbers[1];
+                this.lastET = et;
+                if (this.onDataCallback) this.onDataCallback(bt, et);
+            } else if (numbers.length === 1) {
+                // Single channel detected (assume BT)
+                const bt = numbers[0];
+                // Reuse last known ET to avoid graph crashing to 0
+                if (this.onDataCallback) this.onDataCallback(bt, this.lastET);
+            }
         }
     } catch (e) {
         console.warn("Parse error:", e);
