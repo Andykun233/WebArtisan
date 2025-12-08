@@ -2,6 +2,7 @@
   "name": "WebArtisan Roaster",
   "description": "基于 Web Bluetooth 和 TC4 协议的专业咖啡烘焙记录面板。具备实时曲线绘制及温升率 (RoR) 计算功能。",
   "requestFramePermissions": [
-    "bluetooth"
+    "bluetooth",
+    "serial"
   ]
 }
