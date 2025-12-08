@@ -1,3 +1,4 @@
+
 import React, { useMemo } from 'react';
 import {
   LineChart,
@@ -65,8 +66,8 @@ const RoastChart: React.FC<RoastChartProps> = ({ data, events, currentBT, curren
   return (
     <div className="w-full h-full bg-black border border-[#333] relative overflow-hidden rounded-sm shadow-2xl">
       
-      {/* Real-time HUD Overlay - Hidden on Mobile (md:block) */}
-      <div className="hidden md:block absolute top-2 left-14 z-10 bg-black/70 backdrop-blur-sm border border-[#444] rounded p-2 pointer-events-none shadow-lg">
+      {/* Real-time HUD Overlay - Hidden on Mobile (md:block) - Centered */}
+      <div className="hidden md:block absolute top-2 left-1/2 -translate-x-1/2 z-10 bg-black/70 backdrop-blur-sm border border-[#444] rounded p-2 pointer-events-none shadow-lg">
         <div className="flex gap-4 text-xs font-mono font-bold">
            <div className="flex flex-col items-center">
               <span className="text-[#ff4d4d]">{currentBT.toFixed(1)}</span>
