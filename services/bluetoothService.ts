@@ -1,58 +1,10 @@
 import { DEFAULT_BLE_CONFIG } from '../types';
 
-// Add missing Web Bluetooth types to global scope
-declare global {
-  interface Navigator {
-    bluetooth: {
-      requestDevice(options?: RequestDeviceOptions): Promise<BluetoothDevice>;
-    };
-  }
-
-  interface RequestDeviceOptions {
-    filters?: Array<{
-      services?: (string | number)[];
-      name?: string;
-      namePrefix?: string;
-    }>;
-    optionalServices?: (string | number)[];
-    acceptAllDevices?: boolean;
-  }
-
-  interface BluetoothDevice extends EventTarget {
-    id: string;
-    name?: string;
-    gatt?: BluetoothRemoteGATTServer;
-  }
-
-  interface BluetoothRemoteGATTServer {
-    connected: boolean;
-    device: BluetoothDevice;
-    connect(): Promise<BluetoothRemoteGATTServer>;
-    disconnect(): void;
-    getPrimaryService(service: string | number): Promise<BluetoothRemoteGATTService>;
-  }
-
-  interface BluetoothRemoteGATTService {
-    uuid: string;
-    isPrimary: boolean;
-    getCharacteristic(characteristic: string | number): Promise<BluetoothRemoteGATTCharacteristic>;
-  }
-
-  interface BluetoothRemoteGATTCharacteristic extends EventTarget {
-    uuid: string;
-    value?: DataView;
-    readValue(): Promise<DataView>;
-    writeValue(value: BufferSource): Promise<void>;
-    startNotifications(): Promise<BluetoothRemoteGATTCharacteristic>;
-    stopNotifications(): Promise<BluetoothRemoteGATTCharacteristic>;
-  }
-}
-
 export class TC4BluetoothService {
-  private device: BluetoothDevice | null = null;
-  private server: BluetoothRemoteGATTServer | null = null;
-  private rxChar: BluetoothRemoteGATTCharacteristic | null = null;
-  private txChar: BluetoothRemoteGATTCharacteristic | null = null;
+  private device: any | null = null;
+  private server: any | null = null;
+  private rxChar: any | null = null;
+  private txChar: any | null = null;
   private onDataCallback: ((bt: number, et: number) => void) | null = null;
   private onDisconnectCallback: (() => void) | null = null;
   private textDecoder = new TextDecoder();
@@ -67,13 +19,14 @@ export class TC4BluetoothService {
     this.onDisconnectCallback = onDisconnect;
 
     // Check for browser support
-    if (!navigator.bluetooth) {
+    const nav = navigator as any;
+    if (!nav.bluetooth) {
       throw new Error("当前浏览器不支持 Web Bluetooth。请使用 Chrome, Edge 或 Bluefy (iOS)。");
     }
 
     try {
       console.log('Requesting Bluetooth Device...');
-      this.device = await navigator.bluetooth.requestDevice({
+      this.device = await nav.bluetooth.requestDevice({
         filters: [{ services: [DEFAULT_BLE_CONFIG.serviceUuid] }],
         optionalServices: [DEFAULT_BLE_CONFIG.serviceUuid]
       });
@@ -104,7 +57,7 @@ export class TC4BluetoothService {
 
       return this.device.name || "TC4 Device";
 
-    } catch (error) {
+    } catch (error: any) {
       console.error('Connection failed:', error);
       throw error;
     }
@@ -130,7 +83,7 @@ export class TC4BluetoothService {
   }
 
   private handleNotifications = (event: Event) => {
-    const target = event.target as BluetoothRemoteGATTCharacteristic;
+    const target = event.target as any;
     const value = target.value;
     if (!value) return;
 
