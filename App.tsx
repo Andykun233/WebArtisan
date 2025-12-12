@@ -1,14 +1,16 @@
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Play, Square, Bluetooth, Thermometer, AlertCircle, Terminal, RotateCcw, Loader2, Signal, Undo2, X, Download, Upload, FileInput, Usb, Bug } from 'lucide-react';
+import { Play, Square, Bluetooth, Thermometer, AlertCircle, Terminal, RotateCcw, Loader2, Signal, Undo2, X, Download, Upload, FileInput, Usb, Bug, Wifi } from 'lucide-react';
 import RoastChart from './components/RoastChart';
 import StatCard from './components/StatCard';
 import { TC4BluetoothService } from './services/bluetoothService';
 import { TC4SerialService } from './services/serialService';
+import { WebSocketService } from './services/websocketService';
 import { DataPoint, RoastStatus, RoastEvent } from './types';
 
 const bluetoothService = new TC4BluetoothService();
 const serialService = new TC4SerialService();
+const websocketService = new WebSocketService();
 
 // --- Utility: Linear Regression for Slope Calculation (Artisan Algorithm) ---
 // Calculates the slope of the best-fit line through the data points using Least Squares.
@@ -277,27 +279,30 @@ const App: React.FC = () => {
 
   const [startTime, setStartTime] = useState<number | null>(null);
   
-  // Instant values for display
-  const [currentBT, setCurrentBT] = useState<number>(20.0);
-  const [currentET, setCurrentET] = useState<number>(20.0);
+  // Instant values for display. Initialized to 0.
+  const [currentBT, setCurrentBT] = useState<number>(0);
+  const [currentET, setCurrentET] = useState<number>(0);
   const [currentRoR, setCurrentRoR] = useState<number>(0.0);
   const [currentETRoR, setCurrentETRoR] = useState<number>(0.0);
+
+  // New State: Track if we have received real data to prevent false positives on logic
+  const [hasReceivedFirstData, setHasReceivedFirstData] = useState(false);
 
   // Debugging
   const [showRawLog, setShowRawLog] = useState(false);
   const [rawLogs, setRawLogs] = useState<string[]>([]);
   const rawLogsRef = useRef<string[]>([]);
 
-  // Refs for stable access inside intervals without triggering re-renders
-  const btRef = useRef(20.0);
-  const etRef = useRef(20.0);
+  // Refs for stable access inside intervals without triggering re-renders. Initialized to 0.
+  const btRef = useRef(0);
+  const etRef = useRef(0);
   const dataRef = useRef<DataPoint[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const backgroundInputRef = useRef<HTMLInputElement>(null);
 
   // Connection State
   const [isConnecting, setIsConnecting] = useState(false);
-  const [activeService, setActiveService] = useState<'bluetooth' | 'serial' | 'simulation' | null>(null);
+  const [activeService, setActiveService] = useState<'bluetooth' | 'serial' | 'websocket' | 'simulation' | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [deviceName, setDeviceName] = useState<string | null>(null);
@@ -321,6 +326,7 @@ const App: React.FC = () => {
     // Update State for UI
     setCurrentBT(bt);
     setCurrentET(et);
+    setHasReceivedFirstData(true);
   }, []);
 
   const handleRawData = useCallback((raw: string) => {
@@ -339,6 +345,15 @@ const App: React.FC = () => {
      setDeviceName(null);
      setActiveService(null);
      setErrorMsg("设备连接已断开");
+     setHasReceivedFirstData(false);
+     
+     // Reset values to 0 on disconnect
+     setCurrentBT(0);
+     setCurrentET(0);
+     setCurrentRoR(0);
+     setCurrentETRoR(0);
+     btRef.current = 0;
+     etRef.current = 0;
   }, []);
 
   // Handlers
@@ -353,7 +368,7 @@ const App: React.FC = () => {
       const name = await bluetoothService.connect(handleDataUpdate, handleDisconnect, handleRawData);
       setDeviceName(name);
       setActiveService('bluetooth');
-      setStatus(RoastStatus.PREHEATING); // Go directly to Preheating after connection
+      setStatus(RoastStatus.CONNECTED);
     } catch (err: any) {
       setErrorMsg(err.message || "蓝牙连接失败。请检查设备电源和配对状态。");
       console.error(err);
@@ -391,13 +406,47 @@ const App: React.FC = () => {
         const name = await serialService.connect(handleDataUpdate, handleDisconnect, baudRate, handleRawData);
         setDeviceName(name);
         setActiveService('serial');
-        setStatus(RoastStatus.PREHEATING);
+        setStatus(RoastStatus.CONNECTED); 
       } catch (err: any) {
         setErrorMsg(err.message || "串口连接失败。");
         console.error(err);
       } finally {
         setIsConnecting(false);
       }
+  };
+
+  const handleWebSocketConnect = async () => {
+    setIsConnecting(true);
+    setRawLogs([]);
+    rawLogsRef.current = [];
+
+    const defaultUrl = "localhost:8080";
+    const input = window.prompt("请输入 WebSocket 地址\nArtisan 默认端口: 8080", defaultUrl);
+
+    if (input === null) {
+        setIsConnecting(false);
+        return;
+    }
+
+    const url = input.trim();
+
+    try {
+        setErrorMsg(null);
+        const name = await websocketService.connect(
+            url, 
+            handleDataUpdate, 
+            handleDisconnect, 
+            handleRawData,
+            (msg) => setErrorMsg(msg)
+        );
+        setDeviceName(name);
+        setActiveService('websocket');
+        setStatus(RoastStatus.CONNECTED); 
+    } catch (err: any) {
+        setErrorMsg(err.message || "WebSocket 连接失败");
+    } finally {
+        setIsConnecting(false);
+    }
   };
 
   const handleStartRoast = () => {
@@ -458,9 +507,9 @@ const App: React.FC = () => {
     setShowUndoDrop(false);
     if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
 
-    // If still connected (not IDLE), go to PREHEATING. If IDLE, stay IDLE.
+    // If still connected (not IDLE), go to CONNECTED (was preheating). If IDLE, stay IDLE.
     if (status !== RoastStatus.IDLE) {
-        setStatus(RoastStatus.PREHEATING);
+        setStatus(RoastStatus.CONNECTED);
     }
     
     setData([]);
@@ -479,6 +528,7 @@ const App: React.FC = () => {
       return () => {
           bluetoothService.disconnect();
           serialService.disconnect();
+          websocketService.disconnect();
       }
   }, []);
 
@@ -760,7 +810,7 @@ const App: React.FC = () => {
     } else {
         setIsSimulating(true);
         setActiveService('simulation');
-        setStatus(RoastStatus.PREHEATING); // Start in Preheating mode
+        setStatus(RoastStatus.CONNECTED); // Start Connected
         setDeviceName("模拟烘焙机 (Demo)");
         
         // Init physics vars
@@ -861,7 +911,6 @@ const App: React.FC = () => {
   // Logic for status color
   const getStatusColor = () => {
       if (isConnecting) return 'bg-yellow-500 animate-pulse';
-      if (status === RoastStatus.PREHEATING) return 'bg-orange-500 shadow-[0_0_8px_#f97316]'; // Orange for Preheating
       if (status !== RoastStatus.IDLE) return 'bg-[#39ff14] shadow-[0_0_8px_#39ff14]'; // Green for Connected/Roasting
       return 'bg-red-500';
   };
@@ -869,7 +918,6 @@ const App: React.FC = () => {
   const getStatusText = () => {
       if (isConnecting) return '正在连接...';
       if (status === RoastStatus.IDLE) return '未连接';
-      if (status === RoastStatus.PREHEATING) return '预热中';
       return '设备在线';
   };
 
@@ -962,13 +1010,13 @@ const App: React.FC = () => {
                   <div className="flex flex-col gap-1">
                       <div>
                         状态: <span className={status !== RoastStatus.IDLE ? 'text-green-400' : 'text-red-400'}>
-                             {isConnecting ? '初始化中...' : status === RoastStatus.IDLE ? '等待连接' : status === RoastStatus.PREHEATING ? '正在预热' : '已就绪'}
+                             {isConnecting ? '初始化中...' : status === RoastStatus.IDLE ? '等待连接' : '已就绪'}
                         </span>
                       </div>
                       {status !== RoastStatus.IDLE && (
                           <>
                             <div>设备: {deviceName || '未知'}</div>
-                            <div>模式: {activeService === 'bluetooth' ? 'Bluetooth LE' : activeService === 'serial' ? 'Serial/SPP' : 'Simulation'}</div>
+                            <div>模式: {activeService === 'bluetooth' ? 'Bluetooth LE' : activeService === 'serial' ? 'Serial/SPP' : activeService === 'websocket' ? 'WebSocket' : 'Simulation'}</div>
                             <div className="flex items-center gap-1">信号: <Signal size={10} className="text-green-500"/> 强</div>
                           </>
                       )}
@@ -997,6 +1045,21 @@ const App: React.FC = () => {
 
             {status === RoastStatus.IDLE && (
                  <>
+                 {/* WebSocket Connection Button */}
+                 <button 
+                    onClick={handleWebSocketConnect} 
+                    disabled={isConnecting}
+                    className="px-2 py-1.5 md:px-3 bg-[#333] hover:bg-[#555] disabled:bg-[#222] text-white rounded font-bold text-xs md:text-sm flex items-center gap-1 border border-[#555] transition-all"
+                    title="连接 Artisan WebSocket (WiFi)"
+                 >
+                    {isConnecting ? (
+                        <Loader2 size={14} className="animate-spin md:w-4 md:h-4" />
+                    ) : (
+                        <Wifi size={14} className="md:w-4 md:h-4" />
+                    )}
+                    <span className="hidden md:inline">{isConnecting ? '...' : 'WiFi'}</span>
+                 </button>
+
                  {/* Serial Connection Button */}
                  <button 
                     onClick={handleSerialConnect} 
@@ -1028,8 +1091,8 @@ const App: React.FC = () => {
                 </>
             )}
 
-            {/* Show START button when Connected or Preheating */}
-            {(status === RoastStatus.CONNECTED || status === RoastStatus.PREHEATING) && (
+            {/* Show START button when Connected */}
+            {(status === RoastStatus.CONNECTED) && (
                  <button onClick={handleStartRoast} className="px-3 md:px-4 py-1.5 bg-[#2da44e] hover:bg-[#2c974b] text-white rounded font-bold text-xs md:text-sm flex items-center gap-1 border border-green-400/20 shadow-[0_0_10px_rgba(45,164,78,0.4)]">
                    <Play size={14} className="md:w-4 md:h-4" /> 开始
                </button>

@@ -10,7 +10,6 @@ export interface DataPoint {
 export enum RoastStatus {
   IDLE = 'IDLE',
   CONNECTED = 'CONNECTED',
-  PREHEATING = 'PREHEATING', // Added Preheating state
   ROASTING = 'ROASTING',
   COOLING = 'COOLING',
   FINISHED = 'FINISHED',
