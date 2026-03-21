@@ -237,88 +237,151 @@ const parseRoastLog = (content: string, fileName: string): { data: DataPoint[], 
     if (fileName.endsWith('.json') || fileName.endsWith('.alog')) {
         // JSON / ALOG Parsing
         const json = parseRoastObject(content, fileName);
-        
-        // Support standard Artisan "timex", "temp1" (ET/BT), "temp2" (BT) structure
-        let btArray: number[] = [];
-        let etArray: number[] = [];
-        let timeArray: number[] = [];
+        // Custom roaster-app JSON support: { dataList: [...], eventList: [...] }
+        if (Array.isArray(json.dataList) && json.dataList.length > 0) {
+            parsedData = json.dataList
+                .map((item: any) => {
+                    const timeVal = Number(item.duration ?? item.time);
+                    const btVal = Number(item.bt ?? item.temp2 ?? item.bean ?? item.Bean);
+                    const etVal = Number(item.et ?? item.temp1 ?? item.environment ?? item.Environment ?? 0);
+                    const rorVal = Number(item.ror);
 
-        // 1. Try to extract Temperature Arrays
-        if (json.temps) {
-            // Older or detailed format
-            btArray = json.temps.Bean || json.temps.bean || [];
-            etArray = json.temps.Environment || json.temps.environment || [];
-            if (json.temps.x) timeArray = json.temps.x;
+                    if (!Number.isFinite(timeVal) || !Number.isFinite(btVal)) return null;
+
+                    return {
+                        time: timeVal,
+                        bt: btVal,
+                        et: Number.isFinite(etVal) ? etVal : 0,
+                        ror: Number.isFinite(rorVal) ? rorVal : 0,
+                        et_ror: 0
+                    } as DataPoint;
+                })
+                .filter((point: DataPoint | null): point is DataPoint => point !== null)
+                .sort((a, b) => a.time - b.time);
+
+            // Ignore preheat points before charge when both negative and non-negative timestamps exist.
+            if (parsedData.some((p) => p.time < 0) && parsedData.some((p) => p.time >= 0)) {
+                parsedData = parsedData.filter((p) => p.time >= 0);
+            }
+
+            if (Array.isArray(json.eventList)) {
+                const eventCodeMap: {[key: number]: string} = {
+                    1: '入豆',
+                    2: '回温点',
+                    3: '脱水结束',
+                    4: '一爆开始',
+                    5: '一爆结束',
+                    6: '二爆开始',
+                    7: '二爆结束',
+                    8: '下豆'
+                };
+
+                parsedEvents = json.eventList
+                    .map((evt: any) => {
+                        const timeVal = Number(evt.time ?? evt.duration);
+                        const codeVal = Number(evt.event);
+                        if (!Number.isFinite(timeVal) || timeVal < 0 || codeVal === 0) return null;
+
+                        let tempVal = Number(evt.temperature);
+                        if (!Number.isFinite(tempVal) && parsedData.length > 0) {
+                            const closest = parsedData.reduce((prev, curr) =>
+                                Math.abs(curr.time - timeVal) < Math.abs(prev.time - timeVal) ? curr : prev
+                            , parsedData[0]);
+                            tempVal = closest.bt;
+                        }
+
+                        return {
+                            time: timeVal,
+                            label: eventCodeMap[codeVal] || `事件${codeVal}`,
+                            temp: Number.isFinite(tempVal) ? tempVal : 0
+                        } as RoastEvent;
+                    })
+                    .filter((evt: RoastEvent | null): evt is RoastEvent => evt !== null)
+                    .sort((a, b) => a.time - b.time);
+            }
         } else {
-            // Root level structure (Common in newer Artisan exports)
-            btArray = json.temp2 || json.Bean || [];
-            etArray = json.temp1 || json.Environment || [];
-        }
+            // Support standard Artisan "timex", "temp1" (ET/BT), "temp2" (BT) structure
+            let btArray: number[] = [];
+            let etArray: number[] = [];
+            let timeArray: number[] = [];
 
-        // 2. Try to extract Time Array
-        if (json.timex && Array.isArray(json.timex)) {
-            timeArray = json.timex;
-        } else if (json.time && Array.isArray(json.time)) {
-            timeArray = json.time;
-        }
-
-        // 3. Fallback: If no time, generate from index
-        if (!timeArray || timeArray.length === 0) {
-            if (btArray.length > 0) {
-                const interval = json.samplinginterval || 3.0;
-                timeArray = btArray.map((_: any, i: number) => i * interval);
-            } else if (json.data && Array.isArray(json.data)) {
-                // Legacy format support
-                parsedData = json.data;
-                parsedEvents = json.events || [];
+            // 1. Try to extract Temperature Arrays
+            if (json.temps) {
+                // Older or detailed format
+                btArray = json.temps.Bean || json.temps.bean || [];
+                etArray = json.temps.Environment || json.temps.environment || [];
+                if (json.temps.x) timeArray = json.temps.x;
+            } else {
+                // Root level structure (Common in newer Artisan exports)
+                btArray = json.temp2 || json.Bean || [];
+                etArray = json.temp1 || json.Environment || [];
             }
-        }
 
-        // 4. Construct DataPoints if we parsed arrays
-        if (parsedData.length === 0 && btArray.length > 0) {
-            const len = Math.min(btArray.length, timeArray.length);
-            for(let i = 0; i < len; i++) {
-                parsedData.push({
-                    time: timeArray[i],
-                    bt: btArray[i],
-                    et: etArray[i] || 0,
-                    ror: 0,
-                    et_ror: 0
-                });
+            // 2. Try to extract Time Array
+            if (json.timex && Array.isArray(json.timex)) {
+                timeArray = json.timex;
+            } else if (json.time && Array.isArray(json.time)) {
+                timeArray = json.time;
             }
-        }
 
-        // 5. Extract Events (Try 'computed' first for standard events)
-        if (json.computed) {
-            const c = json.computed;
-            const eventMapping: {[key:string]: string} = {
-                'CHARGE_BT': '入豆',
-                'TP_time': '回温点',
-                'DRY_time': '脱水结束',
-                'FCs_time': '一爆开始',
-                'FCe_time': '一爆结束',
-                'SCs_time': '二爆开始',
-                'SCe_time': '二爆结束',
-                'DROP_time': '下豆'
-            };
+            // 3. Fallback: If no time, generate from index
+            if (!timeArray || timeArray.length === 0) {
+                if (btArray.length > 0) {
+                    const interval = json.samplinginterval || 3.0;
+                    timeArray = btArray.map((_: any, i: number) => i * interval);
+                } else if (json.data && Array.isArray(json.data)) {
+                    // Legacy format support
+                    parsedData = json.data;
+                    parsedEvents = json.events || [];
+                }
+            }
 
-            for (const [key, label] of Object.entries(eventMapping)) {
-                    if (c[key] !== undefined && c[key] > 0) {
-                        if (key.endsWith('_time')) {
-                            const t = c[key];
-                            if (parsedData.length > 0) {
-                                const closest = parsedData.reduce((prev, curr) => 
-                                    Math.abs(curr.time - t) < Math.abs(prev.time - t) ? curr : prev
-                                , parsedData[0]);
-                                parsedEvents.push({ time: t, label: label, temp: closest.bt });
-                            } else {
-                                parsedEvents.push({ time: t, label: label, temp: 0 });
+            // 4. Construct DataPoints if we parsed arrays
+            if (parsedData.length === 0 && btArray.length > 0) {
+                const len = Math.min(btArray.length, timeArray.length);
+                for(let i = 0; i < len; i++) {
+                    parsedData.push({
+                        time: timeArray[i],
+                        bt: btArray[i],
+                        et: etArray[i] || 0,
+                        ror: 0,
+                        et_ror: 0
+                    });
+                }
+            }
+
+            // 5. Extract Events (Try 'computed' first for standard events)
+            if (json.computed) {
+                const c = json.computed;
+                const eventMapping: {[key:string]: string} = {
+                    'CHARGE_BT': '入豆',
+                    'TP_time': '回温点',
+                    'DRY_time': '脱水结束',
+                    'FCs_time': '一爆开始',
+                    'FCe_time': '一爆结束',
+                    'SCs_time': '二爆开始',
+                    'SCe_time': '二爆结束',
+                    'DROP_time': '下豆'
+                };
+
+                for (const [key, label] of Object.entries(eventMapping)) {
+                        if (c[key] !== undefined && c[key] > 0) {
+                            if (key.endsWith('_time')) {
+                                const t = c[key];
+                                if (parsedData.length > 0) {
+                                    const closest = parsedData.reduce((prev, curr) => 
+                                        Math.abs(curr.time - t) < Math.abs(prev.time - t) ? curr : prev
+                                    , parsedData[0]);
+                                    parsedEvents.push({ time: t, label: label, temp: closest.bt });
+                                } else {
+                                    parsedEvents.push({ time: t, label: label, temp: 0 });
+                                }
+                            }
+                            else if (key === 'CHARGE_BT') {
+                                parsedEvents.push({ time: 0, label: label, temp: c[key] });
                             }
                         }
-                        else if (key === 'CHARGE_BT') {
-                            parsedEvents.push({ time: 0, label: label, temp: c[key] });
-                        }
-                    }
+                }
             }
         }
 
