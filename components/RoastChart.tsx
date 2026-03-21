@@ -79,6 +79,10 @@ const RoastChart: React.FC<RoastChartProps> = ({ data, events, currentBT, curren
             <span className="inline-block w-5 h-0 border-t-2 border-dotted border-[#86bcff] opacity-80"></span>
             <span>参考 ET</span>
           </div>
+          <div className="flex items-center gap-1.5">
+            <span className="inline-block w-5 h-0 border-t border-dashed border-[#ffe08a] opacity-80"></span>
+            <span>参考 RoR</span>
+          </div>
         </div>
       )}
 
@@ -171,6 +175,20 @@ const RoastChart: React.FC<RoastChartProps> = ({ data, events, currentBT, curren
                     yAxisId="left" 
                     name="参考 ET" 
                     isAnimationActive={false}
+                />
+                <Line
+                    data={backgroundData}
+                    type="monotone"
+                    dataKey="ror"
+                    stroke="#ffe08a"
+                    strokeOpacity={0.45}
+                    strokeWidth={1}
+                    dot={false}
+                    strokeDasharray="4 4"
+                    yAxisId="right"
+                    name="参考 RoR"
+                    isAnimationActive={false}
+                    connectNulls
                 />
              </>
           )}
