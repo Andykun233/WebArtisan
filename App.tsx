@@ -79,6 +79,122 @@ function normalizeRoR(value: number): number {
   return parseFloat(withDeadband.toFixed(1));
 }
 
+function isWordChar(char: string | undefined): boolean {
+  return !!char && /[A-Za-z0-9_]/.test(char);
+}
+
+function convertPythonLiteralToJson(literal: string): string {
+  let out = "";
+  let inSingleString = false;
+
+  for (let i = 0; i < literal.length; i++) {
+    const ch = literal[i];
+
+    if (inSingleString) {
+      if (ch === "\\") {
+        const next = literal[i + 1];
+        if (next === undefined) {
+          out += "\\\\";
+          break;
+        }
+
+        if (next === "'") {
+          out += "'";
+          i++;
+          continue;
+        }
+
+        if (next === '"') {
+          out += '\\"';
+          i++;
+          continue;
+        }
+
+        out += `\\${next}`;
+        i++;
+        continue;
+      }
+
+      if (ch === '"') {
+        out += '\\"';
+        continue;
+      }
+
+      if (ch === "'") {
+        out += '"';
+        inSingleString = false;
+        continue;
+      }
+
+      out += ch;
+      continue;
+    }
+
+    if (ch === "'") {
+      out += '"';
+      inSingleString = true;
+      continue;
+    }
+
+    if (
+      ch === "T" &&
+      literal.startsWith("True", i) &&
+      !isWordChar(literal[i - 1]) &&
+      !isWordChar(literal[i + 4])
+    ) {
+      out += "true";
+      i += 3;
+      continue;
+    }
+
+    if (
+      ch === "F" &&
+      literal.startsWith("False", i) &&
+      !isWordChar(literal[i - 1]) &&
+      !isWordChar(literal[i + 5])
+    ) {
+      out += "false";
+      i += 4;
+      continue;
+    }
+
+    if (
+      ch === "N" &&
+      literal.startsWith("None", i) &&
+      !isWordChar(literal[i - 1]) &&
+      !isWordChar(literal[i + 4])
+    ) {
+      out += "null";
+      i += 3;
+      continue;
+    }
+
+    out += ch;
+  }
+
+  return out;
+}
+
+function parseRoastObject(content: string, fileName: string): any {
+  const text = content.trim();
+
+  try {
+    return JSON.parse(text);
+  } catch (jsonErr) {
+    // Artisan ALOG can be Python-literal-like dict text (single quotes + True/False)
+    if (fileName.endsWith(".alog")) {
+      try {
+        const converted = convertPythonLiteralToJson(text);
+        return JSON.parse(converted);
+      } catch (alogErr) {
+        throw new Error("ALOG 文件解析失败：格式不是标准 Artisan 导出内容。");
+      }
+    }
+
+    throw jsonErr;
+  }
+}
+
 // --- Utility: Batch Calculate RoR for Imported Data ---
 // Uses dynamic lookback + EMA smoothing for better stability.
 function recalculateRoR(data: DataPoint[]): DataPoint[] {
@@ -114,7 +230,7 @@ const parseRoastLog = (content: string, fileName: string): { data: DataPoint[], 
 
     if (fileName.endsWith('.json') || fileName.endsWith('.alog')) {
         // JSON / ALOG Parsing
-        const json = JSON.parse(content);
+        const json = parseRoastObject(content, fileName);
         
         // Support standard Artisan "timex", "temp1" (ET/BT), "temp2" (BT) structure
         let btArray: number[] = [];
@@ -184,11 +300,14 @@ const parseRoastLog = (content: string, fileName: string): { data: DataPoint[], 
                     if (c[key] !== undefined && c[key] > 0) {
                         if (key.endsWith('_time')) {
                             const t = c[key];
-                            const closest = parsedData.reduce((prev, curr) => 
-                                Math.abs(curr.time - t) < Math.abs(prev.time - t) ? curr : prev
-                            , parsedData[0]);
-                            
-                            parsedEvents.push({ time: t, label: label, temp: closest.bt });
+                            if (parsedData.length > 0) {
+                                const closest = parsedData.reduce((prev, curr) => 
+                                    Math.abs(curr.time - t) < Math.abs(prev.time - t) ? curr : prev
+                                , parsedData[0]);
+                                parsedEvents.push({ time: t, label: label, temp: closest.bt });
+                            } else {
+                                parsedEvents.push({ time: t, label: label, temp: 0 });
+                            }
                         }
                         else if (key === 'CHARGE_BT') {
                             parsedEvents.push({ time: 0, label: label, temp: c[key] });
