@@ -79,6 +79,12 @@ function normalizeRoR(value: number): number {
   return parseFloat(withDeadband.toFixed(1));
 }
 
+const ET_PRESENT_THRESHOLD = 1.0;
+
+function hasDetectedET(points: DataPoint[]): boolean {
+  return points.some((p) => Number.isFinite(p.et) && p.et > ET_PRESENT_THRESHOLD);
+}
+
 function isWordChar(char: string | undefined): boolean {
   return !!char && /[A-Za-z0-9_]/.test(char);
 }
@@ -458,6 +464,9 @@ const App: React.FC = () => {
 
   // Simulation
   const [isSimulating, setIsSimulating] = useState(false);
+
+  const hasLiveET = currentET > ET_PRESENT_THRESHOLD || hasDetectedET(data);
+  const hasBackgroundET = hasDetectedET(backgroundData);
   const simulationIntervalRef = useRef<number | null>(null);
 
   // Undo Drop State
@@ -1441,11 +1450,11 @@ const App: React.FC = () => {
         ">
             <div className="mb-2 pb-2 border-b border-[#31404f] text-[11px] font-semibold text-[#8ea0b3] uppercase tracking-[0.15em]">实时温度</div>
             <StatCard label="Bean Temp" value={currentBT.toFixed(1)} unit="°C" color="red" />
-            <StatCard label="Env Temp" value={currentET.toFixed(1)} unit="°C" color="blue" />
+            {hasLiveET && <StatCard label="Env Temp" value={currentET.toFixed(1)} unit="°C" color="blue" />}
             
             <div className="my-2 pb-2 border-b border-[#31404f] text-[11px] font-semibold text-[#8ea0b3] uppercase tracking-[0.15em]">温升率</div>
             <StatCard label="BT RoR" value={currentRoR.toFixed(1)} unit="°/min" color="yellow" />
-            <StatCard label="ET RoR" value={currentETRoR.toFixed(1)} unit="°/min" color="cyan" />
+            {hasLiveET && <StatCard label="ET RoR" value={currentETRoR.toFixed(1)} unit="°/min" color="cyan" />}
             
             <div className="my-2 pb-2 border-b border-[#31404f] text-[11px] font-semibold text-[#8ea0b3] uppercase tracking-[0.15em]">时间</div>
             <StatCard label="TIME" value={getDuration()} color="green" />
@@ -1455,15 +1464,17 @@ const App: React.FC = () => {
         <div className="flex-1 bg-[#131920]/80 flex flex-col relative min-h-0">
             
             {/* MOBILE ONLY: Data Ticker */}
-            <div className="md:hidden h-12 panel-surface border-b grid grid-cols-4 gap-1 px-1.5 py-1 shrink-0 z-10">
+            <div className={`md:hidden h-12 panel-surface border-b grid ${hasLiveET ? 'grid-cols-4' : 'grid-cols-3'} gap-1 px-1.5 py-1 shrink-0 z-10`}>
                <div className="rounded bg-[#0f151d]/70 border border-[#263444] flex flex-col items-center justify-center">
                   <span className="text-[8px] text-gray-500 font-semibold uppercase tracking-wide">BT</span>
                   <span className="text-sm font-mono font-bold text-[#ff6b6b] leading-none">{currentBT.toFixed(1)}</span>
                </div>
-               <div className="rounded bg-[#0f151d]/70 border border-[#263444] flex flex-col items-center justify-center">
-                  <span className="text-[8px] text-gray-500 font-semibold uppercase tracking-wide">ET</span>
-                  <span className="text-sm font-mono font-bold text-[#58a6ff] leading-none">{currentET.toFixed(1)}</span>
-               </div>
+               {hasLiveET && (
+                 <div className="rounded bg-[#0f151d]/70 border border-[#263444] flex flex-col items-center justify-center">
+                    <span className="text-[8px] text-gray-500 font-semibold uppercase tracking-wide">ET</span>
+                    <span className="text-sm font-mono font-bold text-[#58a6ff] leading-none">{currentET.toFixed(1)}</span>
+                 </div>
+               )}
                <div className="rounded bg-[#0f151d]/70 border border-[#263444] flex flex-col items-center justify-center">
                   <span className="text-[8px] text-gray-500 font-semibold uppercase tracking-wide">RoR</span>
                   <span className="text-sm font-mono font-bold text-[#ffd84d] leading-none">{currentRoR.toFixed(1)}</span>
@@ -1482,6 +1493,8 @@ const App: React.FC = () => {
                     currentET={currentET}
                     currentRoR={currentRoR}
                     backgroundData={backgroundData}
+                    showLiveET={hasLiveET}
+                    showBackgroundET={hasBackgroundET}
                 />
             </div>
         </div>

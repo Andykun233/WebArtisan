@@ -19,19 +19,31 @@ interface RoastChartProps {
   currentET: number;
   currentRoR: number;
   backgroundData?: DataPoint[]; // New prop for background curve
+  showLiveET?: boolean;
+  showBackgroundET?: boolean;
 }
 
-const RoastChart: React.FC<RoastChartProps> = ({ data, events, currentBT, currentET, currentRoR, backgroundData = [] }) => {
+const ET_PRESENT_THRESHOLD = 1.0;
+
+const RoastChart: React.FC<RoastChartProps> = ({ data, events, currentBT, currentET, currentRoR, backgroundData = [], showLiveET, showBackgroundET }) => {
   // Calculate domains to make chart look nicer, keeping a minimum range
   // Must consider both current data AND background data to scale axes correctly
-  const allDataPoints = [...data, ...backgroundData];
-  
-  const maxTemp = allDataPoints.length > 0 
-    ? Math.max(...allDataPoints.map(d => Math.max(d.bt, d.et))) + 10 
-    : 250;
+  const hasDetectedLiveET = currentET > ET_PRESENT_THRESHOLD || data.some((d) => Number.isFinite(d.et) && d.et > ET_PRESENT_THRESHOLD);
+  const hasDetectedBackgroundET = backgroundData.some((d) => Number.isFinite(d.et) && d.et > ET_PRESENT_THRESHOLD);
+  const hasLiveET = showLiveET ?? hasDetectedLiveET;
+  const hasBackgroundET = showBackgroundET ?? hasDetectedBackgroundET;
+
+  const tempPoints = [
+    ...data.map((d) => d.bt),
+    ...backgroundData.map((d) => d.bt),
+    ...(hasLiveET ? data.map((d) => d.et) : []),
+    ...(hasBackgroundET ? backgroundData.map((d) => d.et) : []),
+  ];
+
+  const maxTemp = tempPoints.length > 0 ? Math.max(...tempPoints) + 10 : 250;
 
   // Determine if we should show the ET line (hide if all 0/missing)
-  const hasActiveET = (data.length > 0 && data.some(d => d.et > 1.0)) || (backgroundData.length > 0 && backgroundData.some(d => d.et > 1.0));
+  // Live and background are intentionally separated to avoid showing one because of the other.
 
   // --- RoR Analysis: Detect Flicks (Peaks) and Crashes (Valleys) ---
   // Calculated inline for stability
@@ -75,10 +87,12 @@ const RoastChart: React.FC<RoastChartProps> = ({ data, events, currentBT, curren
             <span className="inline-block w-5 h-0 border-t-2 border-dashed border-[#ff9f9f] opacity-80"></span>
             <span>参考 BT</span>
           </div>
-          <div className="flex items-center gap-1.5">
-            <span className="inline-block w-5 h-0 border-t-2 border-dotted border-[#86bcff] opacity-80"></span>
-            <span>参考 ET</span>
-          </div>
+          {hasBackgroundET && (
+            <div className="flex items-center gap-1.5">
+              <span className="inline-block w-5 h-0 border-t-2 border-dotted border-[#86bcff] opacity-80"></span>
+              <span>参考 ET</span>
+            </div>
+          )}
           <div className="flex items-center gap-1.5">
             <span className="inline-block w-5 h-0 border-t border-dashed border-[#ffe08a] opacity-80"></span>
             <span>参考 RoR</span>
@@ -93,10 +107,12 @@ const RoastChart: React.FC<RoastChartProps> = ({ data, events, currentBT, curren
               <span className="text-[#ff6b6b]">{currentBT.toFixed(1)}</span>
               <span className="text-gray-500 text-[9px]">BT (豆温)</span>
            </div>
-           <div className="flex flex-col items-center">
-              <span className="text-[#58a6ff]">{currentET.toFixed(1)}</span>
-              <span className="text-gray-500 text-[9px]">ET (炉温)</span>
-           </div>
+           {hasLiveET && (
+             <div className="flex flex-col items-center">
+                <span className="text-[#58a6ff]">{currentET.toFixed(1)}</span>
+                <span className="text-gray-500 text-[9px]">ET (炉温)</span>
+             </div>
+           )}
            <div className="flex flex-col items-center">
               <span className="text-[#ffd84d]">{currentRoR.toFixed(1)}</span>
               <span className="text-gray-500 text-[9px]">RoR (温升)</span>
@@ -163,19 +179,21 @@ const RoastChart: React.FC<RoastChartProps> = ({ data, events, currentBT, curren
                     name="参考 BT" 
                     isAnimationActive={false}
                 />
-                <Line 
-                    data={backgroundData}
-                    type="monotone" 
-                    dataKey="et" 
-                    stroke="#86bcff"
-                    strokeOpacity={0.5}
-                    strokeWidth={1.5}
-                    dot={false} 
-                    strokeDasharray="2 5" 
-                    yAxisId="left" 
-                    name="参考 ET" 
-                    isAnimationActive={false}
-                />
+                {hasBackgroundET && (
+                  <Line 
+                      data={backgroundData}
+                      type="monotone" 
+                      dataKey="et" 
+                      stroke="#86bcff"
+                      strokeOpacity={0.5}
+                      strokeWidth={1.5}
+                      dot={false} 
+                      strokeDasharray="2 5" 
+                      yAxisId="left" 
+                      name="参考 ET" 
+                      isAnimationActive={false}
+                  />
+                )}
                 <Line
                     data={backgroundData}
                     type="monotone"
@@ -205,7 +223,7 @@ const RoastChart: React.FC<RoastChartProps> = ({ data, events, currentBT, curren
             isAnimationActive={false} 
           />
           
-          {hasActiveET && (
+          {hasLiveET && (
             <Line 
                 type="monotone" 
                 dataKey="et" 
