@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Play, Square, Bluetooth, Thermometer, AlertCircle, Terminal, RotateCcw, Loader2, Signal, Undo2, X, Download, Upload, FileInput, Usb, Bug, Wifi } from 'lucide-react';
+import { Play, Square, Bluetooth, Thermometer, AlertCircle, Terminal, RotateCcw, Loader2, Signal, Undo2, X, Download, FileInput, Usb, Bug, Wifi } from 'lucide-react';
 import RoastChart from './components/RoastChart';
 import StatCard from './components/StatCard';
 import { TC4BluetoothService } from './services/bluetoothService';
@@ -452,7 +452,6 @@ const App: React.FC = () => {
   const recentEtHistoryRef = useRef<TimeValuePoint[]>([]);
   const smoothedRoRRef = useRef<{ bt: number; et: number }>({ bt: 0, et: 0 });
   const lastSensorUpdateRef = useRef<number>(0);
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const backgroundInputRef = useRef<HTMLInputElement>(null);
 
   // Connection State
@@ -833,18 +832,8 @@ const App: React.FC = () => {
   };
 
   // --- Import Logic ---
-  const handleImportClick = () => {
-      if (fileInputRef.current) fileInputRef.current.click();
-  };
-
   const handleBackgroundClick = () => {
       if (backgroundInputRef.current) backgroundInputRef.current.click();
-  };
-
-  const handleImportFile = (event: React.ChangeEvent<HTMLInputElement>) => {
-      const file = event.target.files?.[0];
-      if (!file) return;
-      processImport(file, false);
   };
 
   const handleBackgroundFile = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -897,7 +886,6 @@ const App: React.FC = () => {
               setErrorMsg((isBackground ? "背景加载失败: " : "导入失败: ") + (err.message || "文件格式错误"));
           } finally {
               // Reset inputs
-              if (fileInputRef.current) fileInputRef.current.value = "";
               if (backgroundInputRef.current) backgroundInputRef.current.value = "";
           }
       };
@@ -1118,13 +1106,6 @@ const App: React.FC = () => {
       {/* Hidden File Inputs */}
       <input 
         type="file" 
-        ref={fileInputRef} 
-        onChange={handleImportFile} 
-        className="hidden" 
-        accept=".json,.alog,.csv"
-      />
-      <input 
-        type="file" 
         ref={backgroundInputRef} 
         onChange={handleBackgroundFile} 
         className="hidden" 
@@ -1251,10 +1232,6 @@ const App: React.FC = () => {
             <button onClick={handleOpenExportModal} className="toolbar-btn shrink-0 p-1.5 md:px-2 md:py-1.5 rounded flex items-center gap-1" title="导出 CSV">
               <Download size={14} className="md:w-4 md:h-4" />
               <span className="hidden md:inline text-xs">导出</span>
-            </button>
-            <button onClick={handleImportClick} className="toolbar-btn shrink-0 p-1.5 md:px-2 md:py-1.5 rounded flex items-center gap-1" title="导入 Artisan /CSV 文件查看">
-              <Upload size={14} className="md:w-4 md:h-4" />
-              <span className="hidden md:inline text-xs">导入</span>
             </button>
             <button onClick={handleBackgroundClick} className="toolbar-btn shrink-0 p-1.5 md:px-2 md:py-1.5 rounded flex items-center gap-1 mr-1 md:mr-2" title="加载背景曲线 (跟随烘焙)">
               <FileInput size={14} className="md:w-4 md:h-4" />
@@ -1389,12 +1366,9 @@ const App: React.FC = () => {
             </div>
           )}
 
-          <div className="grid grid-cols-3 gap-1.5">
+          <div className="grid grid-cols-2 gap-1.5">
             <button onClick={handleOpenExportModal} className="toolbar-btn py-1.5 rounded text-[11px] font-semibold flex items-center justify-center gap-1">
               <Download size={12} /> 导出
-            </button>
-            <button onClick={handleImportClick} className="toolbar-btn py-1.5 rounded text-[11px] font-semibold flex items-center justify-center gap-1">
-              <Upload size={12} /> 导入
             </button>
             <button onClick={handleBackgroundClick} className="toolbar-btn py-1.5 rounded text-[11px] font-semibold flex items-center justify-center gap-1">
               <FileInput size={12} /> 背景
