@@ -12,6 +12,19 @@ const bluetoothService = new TC4BluetoothService();
 const serialService = new TC4SerialService();
 const websocketService = new WebSocketService();
 
+const ROR_CONFIG = {
+  earlyWindowSeconds: 30,
+  stableWindowSeconds: 50,
+  minSpanSeconds: 8,
+  minPoints: 5,
+  smoothingAlpha: 0.35,
+  deadband: 0.15,
+  clampMin: -40,
+  clampMax: 90,
+};
+
+type TimeValuePoint = { time: number; value: number };
+
 // --- Utility: Linear Regression for Slope Calculation (Artisan Algorithm) ---
 // Calculates the slope of the best-fit line through the data points using Least Squares.
 // Returns slope (rate of change per unit time).
@@ -37,46 +50,59 @@ function calculateSlope(data: {time: number, value: number}[]): number {
   return (n * sumXY - sumX * sumY) / denominator;
 }
 
+function getRoRLookbackWindow(currentTime: number): number {
+  return currentTime < 120 ? ROR_CONFIG.earlyWindowSeconds : ROR_CONFIG.stableWindowSeconds;
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
+
+function computeRawRoR(points: TimeValuePoint[]): number {
+  if (points.length < ROR_CONFIG.minPoints) return 0;
+
+  const span = points[points.length - 1].time - points[0].time;
+  if (span < ROR_CONFIG.minSpanSeconds) return 0;
+
+  const slope = calculateSlope(points);
+  return slope * 60;
+}
+
+function smoothRoR(previous: number, raw: number): number {
+  if (previous === 0) return raw;
+  return previous * (1 - ROR_CONFIG.smoothingAlpha) + raw * ROR_CONFIG.smoothingAlpha;
+}
+
+function normalizeRoR(value: number): number {
+  const clipped = clamp(value, ROR_CONFIG.clampMin, ROR_CONFIG.clampMax);
+  const withDeadband = Math.abs(clipped) < ROR_CONFIG.deadband ? 0 : clipped;
+  return parseFloat(withDeadband.toFixed(1));
+}
+
 // --- Utility: Batch Calculate RoR for Imported Data ---
-// Replicates the Artisan logic: 60s Lookback Window using Least Squares.
+// Uses dynamic lookback + EMA smoothing for better stability.
 function recalculateRoR(data: DataPoint[]): DataPoint[] {
-    const LOOKBACK_WINDOW = 60; // Artisan Standard Span (often 30s or 60s)
+    let smoothedBT = 0;
+    let smoothedET = 0;
 
     return data.map((point, index) => {
         const currentTime = point.time;
-        
-        // 1. Calculate BT RoR
-        // Get points within the lookback window ending at current index
-        const historyPointsBT = data
-            .slice(Math.max(0, index - 120), index + 1) // Optimization: limit slice
-            .filter(d => d.time > currentTime - LOOKBACK_WINDOW && d.time <= currentTime)
-            .map(d => ({ time: d.time, value: d.bt }));
+        const lookbackWindow = getRoRLookbackWindow(currentTime);
 
-        let ror = 0;
-        // Require at least a few seconds of data to calculate a slope
-        if (historyPointsBT.length >= 3 && (historyPointsBT[historyPointsBT.length - 1].time - historyPointsBT[0].time > 5)) {
-             ror = calculateSlope(historyPointsBT) * 60; // Convert slope (deg/sec) to RoR (deg/min)
-        }
+        const windowData = data
+          .slice(Math.max(0, index - 180), index + 1)
+          .filter(d => d.time > currentTime - lookbackWindow && d.time <= currentTime);
 
-        // 2. Calculate ET RoR
-        const historyPointsET = data
-            .slice(Math.max(0, index - 120), index + 1)
-            .filter(d => d.time > currentTime - LOOKBACK_WINDOW && d.time <= currentTime)
-            .map(d => ({ time: d.time, value: d.et }));
+        const rawBT = computeRawRoR(windowData.map(d => ({ time: d.time, value: d.bt })));
+        const rawET = computeRawRoR(windowData.map(d => ({ time: d.time, value: d.et })));
 
-        let et_ror = 0;
-        if (historyPointsET.length >= 3 && (historyPointsET[historyPointsET.length - 1].time - historyPointsET[0].time > 5)) {
-             et_ror = calculateSlope(historyPointsET) * 60;
-        }
-        
-        // Cap extreme values (Artisan usually clips artifacts)
-        if (ror > 100) ror = 100; if (ror < -50) ror = -50;
-        if (et_ror > 100) et_ror = 100; if (et_ror < -50) et_ror = -50;
+        smoothedBT = smoothRoR(smoothedBT, rawBT);
+        smoothedET = smoothRoR(smoothedET, rawET);
 
-        return { 
-            ...point, 
-            ror: parseFloat(ror.toFixed(1)), 
-            et_ror: parseFloat(et_ror.toFixed(1)) 
+        return {
+          ...point,
+          ror: normalizeRoR(smoothedBT),
+          et_ror: normalizeRoR(smoothedET)
         };
     });
 }
@@ -297,6 +323,10 @@ const App: React.FC = () => {
   const btRef = useRef(0);
   const etRef = useRef(0);
   const dataRef = useRef<DataPoint[]>([]);
+  const recentBtHistoryRef = useRef<TimeValuePoint[]>([]);
+  const recentEtHistoryRef = useRef<TimeValuePoint[]>([]);
+  const smoothedRoRRef = useRef<{ bt: number; et: number }>({ bt: 0, et: 0 });
+  const lastSensorUpdateRef = useRef<number>(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const backgroundInputRef = useRef<HTMLInputElement>(null);
 
@@ -326,6 +356,7 @@ const App: React.FC = () => {
     // Update Refs for logic
     btRef.current = bt;
     etRef.current = et;
+    lastSensorUpdateRef.current = Date.now();
     // Update State for UI
     setCurrentBT(bt);
     setCurrentET(et);
@@ -357,6 +388,10 @@ const App: React.FC = () => {
      setCurrentETRoR(0);
      btRef.current = 0;
      etRef.current = 0;
+     recentBtHistoryRef.current = [];
+     recentEtHistoryRef.current = [];
+     smoothedRoRRef.current = { bt: 0, et: 0 };
+     lastSensorUpdateRef.current = 0;
   }, []);
 
   // Handlers
@@ -453,12 +488,22 @@ const App: React.FC = () => {
   };
 
   const handleStartRoast = () => {
+    if (status !== RoastStatus.CONNECTED) {
+      setErrorMsg("请先连接设备，再开始烘焙");
+      setTimeout(() => setErrorMsg(null), 2500);
+      return;
+    }
+
     const now = Date.now();
     setStartTime(now);
+    lastSensorUpdateRef.current = now;
     
     // Reset Data but KEEP background data
     setData([]);
     dataRef.current = [];
+    recentBtHistoryRef.current = [];
+    recentEtHistoryRef.current = [];
+    smoothedRoRRef.current = { bt: 0, et: 0 };
     
     setEvents([]);
     setStatus(RoastStatus.ROASTING);
@@ -517,6 +562,9 @@ const App: React.FC = () => {
     
     setData([]);
     dataRef.current = [];
+    recentBtHistoryRef.current = [];
+    recentEtHistoryRef.current = [];
+    smoothedRoRRef.current = { bt: 0, et: 0 };
     setEvents([]);
     setStartTime(null);
     setCurrentRoR(0);
@@ -698,6 +746,8 @@ const App: React.FC = () => {
                    // 2. Set State
                    setData(parsedData);
                    dataRef.current = parsedData; // Sync ref
+                   recentBtHistoryRef.current = [];
+                   recentEtHistoryRef.current = [];
                    setEvents(parsedEvents);
                    setStatus(RoastStatus.FINISHED); // View mode
                    setStartTime(null); // Static
@@ -709,6 +759,7 @@ const App: React.FC = () => {
                        setCurrentET(last.et);
                        setCurrentRoR(last.ror);
                        setCurrentETRoR(last.et_ror || 0);
+                       smoothedRoRRef.current = { bt: last.ror, et: last.et_ror || 0 };
                        btRef.current = last.bt;
                        etRef.current = last.et;
                    }
@@ -732,58 +783,46 @@ const App: React.FC = () => {
     if (status !== RoastStatus.ROASTING || !startTime) return;
 
     const interval = setInterval(() => {
-      const currentTime = (Date.now() - startTime) / 1000;
+      const now = Date.now();
+      const currentTime = (now - startTime) / 1000;
       const currentBTVal = btRef.current;
       const currentETVal = etRef.current;
 
-      // --- Artisan-Style RoR Calculation ---
-      // Method: Least Squares Linear Regression over a fixed Time Span.
-      // Artisan Default Span is often 30s or 60s. We use 60s for smoothness.
-      const LOOKBACK_WINDOW = 60; 
-      
-      // 1. Prepare Data for Regression (BT)
-      // Filter history points within the lookback window
-      const historyPointsBT = dataRef.current
-        .filter(d => d.time > currentTime - LOOKBACK_WINDOW)
-        .map(d => ({ time: d.time, value: d.bt }));
-      
-      const regressionPointsBT = [...historyPointsBT, { time: currentTime, value: currentBTVal }];
-
-      let calculatedRoR = 0;
-      
-      // Only calculate if we have enough data (at least 5 seconds of delta) to avoid noise
-      if (regressionPointsBT.length >= 5 && (regressionPointsBT[regressionPointsBT.length - 1].time - regressionPointsBT[0].time > 5)) {
-         // Calculate Slope via Linear Regression (deg/sec)
-         const slope = calculateSlope(regressionPointsBT);
-         // Convert to deg/min (RoR standard)
-         calculatedRoR = slope * 60;
+      // Prevent stale points from distorting RoR if sensor stream pauses.
+      if (!isSimulating && hasReceivedFirstData && lastSensorUpdateRef.current > 0) {
+        const staleMs = now - lastSensorUpdateRef.current;
+        if (staleMs > 4000) {
+          return;
+        }
       }
 
-      // 2. Prepare Data for Regression (ET)
-      const historyPointsET = dataRef.current
-        .filter(d => d.time > currentTime - LOOKBACK_WINDOW)
-        .map(d => ({ time: d.time, value: d.et }));
-      
-      const regressionPointsET = [...historyPointsET, { time: currentTime, value: currentETVal }];
-
-      let calculatedETRoR = 0;
-      if (regressionPointsET.length >= 5 && (regressionPointsET[regressionPointsET.length - 1].time - regressionPointsET[0].time > 5)) {
-          const slope = calculateSlope(regressionPointsET);
-          calculatedETRoR = slope * 60;
+      // Wait for first real packet before recording live roast (except simulation).
+      if (!isSimulating && !hasReceivedFirstData) {
+        return;
       }
 
-      // Cap extreme values/noise
-      if (Math.abs(calculatedRoR) < 0.1) calculatedRoR = 0;
-      if (calculatedRoR > 100) calculatedRoR = 100;
-      if (calculatedRoR < -50) calculatedRoR = -50;
-      
-      if (Math.abs(calculatedETRoR) < 0.1) calculatedETRoR = 0;
-      if (calculatedETRoR > 100) calculatedETRoR = 100;
-      if (calculatedETRoR < -50) calculatedETRoR = -50;
+      const lookbackWindow = getRoRLookbackWindow(currentTime);
 
-      // Round for display
-      const finalRoR = parseFloat(calculatedRoR.toFixed(1));
-      const finalETRoR = parseFloat(calculatedETRoR.toFixed(1));
+      recentBtHistoryRef.current.push({ time: currentTime, value: currentBTVal });
+      recentEtHistoryRef.current.push({ time: currentTime, value: currentETVal });
+
+      while (recentBtHistoryRef.current.length > 0 && recentBtHistoryRef.current[0].time < currentTime - lookbackWindow) {
+        recentBtHistoryRef.current.shift();
+      }
+      while (recentEtHistoryRef.current.length > 0 && recentEtHistoryRef.current[0].time < currentTime - lookbackWindow) {
+        recentEtHistoryRef.current.shift();
+      }
+
+      const rawRoR = computeRawRoR(recentBtHistoryRef.current);
+      const rawETRoR = computeRawRoR(recentEtHistoryRef.current);
+
+      const smoothedBT = smoothRoR(smoothedRoRRef.current.bt, rawRoR);
+      const smoothedET = smoothRoR(smoothedRoRRef.current.et, rawETRoR);
+
+      const finalRoR = normalizeRoR(smoothedBT);
+      const finalETRoR = normalizeRoR(smoothedET);
+
+      smoothedRoRRef.current = { bt: finalRoR, et: finalETRoR };
 
       // Update UI
       setCurrentRoR(finalRoR);
@@ -807,7 +846,7 @@ const App: React.FC = () => {
     }, 1000);
 
     return () => clearInterval(interval);
-  }, [status, startTime]); // Dependencies reduced to only status/start
+  }, [status, startTime, hasReceivedFirstData, isSimulating]);
 
   // Simulation Logic
   const toggleSimulation = () => {
@@ -828,6 +867,7 @@ const App: React.FC = () => {
         let simEt = 200;
         btRef.current = simBt;
         etRef.current = simEt;
+        lastSensorUpdateRef.current = Date.now();
         setCurrentBT(simBt);
         setCurrentET(simEt);
         
@@ -841,6 +881,7 @@ const App: React.FC = () => {
             // Update Refs
             btRef.current = parseFloat(simBt.toFixed(1));
             etRef.current = parseFloat(simEt.toFixed(1));
+            lastSensorUpdateRef.current = Date.now();
 
             // Update UI
             setCurrentBT(btRef.current);
@@ -1044,16 +1085,45 @@ const App: React.FC = () => {
          </div>
 
          <div className="flex gap-1.5 md:gap-2 items-center">
+            {status === RoastStatus.ROASTING ? (
+              <button
+                onClick={handleStopRoast}
+                className="toolbar-btn toolbar-btn-danger shrink-0 px-3 md:px-4 py-1.5 rounded font-bold text-xs md:text-sm flex items-center gap-1 shadow-[0_0_10px_rgba(207,34,46,0.35)]"
+              >
+                <Square size={14} className="md:w-4 md:h-4" /> 下豆
+              </button>
+            ) : status === RoastStatus.FINISHED ? (
+              <button
+                onClick={handleReset}
+                className="toolbar-btn shrink-0 px-3 py-1.5 rounded font-bold text-xs md:text-sm flex items-center gap-1"
+              >
+                <RotateCcw size={14} className="md:w-4 md:h-4" /> 重置
+              </button>
+            ) : (
+              <button
+                onClick={handleStartRoast}
+                disabled={status !== RoastStatus.CONNECTED || isConnecting}
+                className={`toolbar-btn toolbar-btn-success shrink-0 px-3 md:px-4 py-1.5 rounded font-bold text-xs md:text-sm flex items-center gap-1 ${
+                  status !== RoastStatus.CONNECTED || isConnecting
+                    ? 'opacity-45 cursor-not-allowed shadow-none'
+                    : 'shadow-[0_0_10px_rgba(45,164,78,0.35)]'
+                }`}
+                title={status === RoastStatus.CONNECTED ? "开始烘焙" : "连接设备后可开始"}
+              >
+                <Play size={14} className="md:w-4 md:h-4" /> 开始
+              </button>
+            )}
+
             {/* File Operations */}
-            <button onClick={handleOpenExportModal} className="toolbar-btn p-1.5 md:px-2 md:py-1.5 rounded flex items-center gap-1" title="导出 CSV">
+            <button onClick={handleOpenExportModal} className="toolbar-btn shrink-0 p-1.5 md:px-2 md:py-1.5 rounded flex items-center gap-1" title="导出 CSV">
                 <Download size={14} className="md:w-4 md:h-4" />
                 <span className="hidden md:inline text-xs">导出</span>
             </button>
-            <button onClick={handleImportClick} className="toolbar-btn p-1.5 md:px-2 md:py-1.5 rounded flex items-center gap-1" title="导入 Artisan /CSV 文件查看">
+            <button onClick={handleImportClick} className="toolbar-btn shrink-0 p-1.5 md:px-2 md:py-1.5 rounded flex items-center gap-1" title="导入 Artisan /CSV 文件查看">
                 <Upload size={14} className="md:w-4 md:h-4" />
                 <span className="hidden md:inline text-xs">导入</span>
             </button>
-            <button onClick={handleBackgroundClick} className="toolbar-btn p-1.5 md:px-2 md:py-1.5 rounded flex items-center gap-1 mr-1 md:mr-2" title="加载背景曲线 (跟随烘焙)">
+            <button onClick={handleBackgroundClick} className="toolbar-btn shrink-0 p-1.5 md:px-2 md:py-1.5 rounded flex items-center gap-1 mr-1 md:mr-2" title="加载背景曲线 (跟随烘焙)">
                 <FileInput size={14} className="md:w-4 md:h-4" />
                 <span className="hidden md:inline text-xs">背景</span>
             </button>
@@ -1064,7 +1134,7 @@ const App: React.FC = () => {
                  <button 
                     onClick={handleWebSocketConnect} 
                     disabled={isConnecting}
-                    className="toolbar-btn px-2 py-1.5 md:px-3 rounded font-bold text-xs md:text-sm flex items-center gap-1 disabled:opacity-40 disabled:cursor-not-allowed disabled:transform-none"
+                    className="toolbar-btn shrink-0 px-2 py-1.5 md:px-3 rounded font-bold text-xs md:text-sm flex items-center gap-1 disabled:opacity-40 disabled:cursor-not-allowed disabled:transform-none"
                     title="连接 Artisan WebSocket (WiFi)"
                  >
                     {isConnecting ? (
@@ -1079,7 +1149,7 @@ const App: React.FC = () => {
                  <button 
                     onClick={handleSerialConnect} 
                     disabled={isConnecting}
-                    className="toolbar-btn px-2 py-1.5 md:px-3 rounded font-bold text-xs md:text-sm flex items-center gap-1 disabled:opacity-40 disabled:cursor-not-allowed disabled:transform-none"
+                    className="toolbar-btn shrink-0 px-2 py-1.5 md:px-3 rounded font-bold text-xs md:text-sm flex items-center gap-1 disabled:opacity-40 disabled:cursor-not-allowed disabled:transform-none"
                     title="连接传统蓝牙(SPP)或USB串口"
                  >
                     {isConnecting ? (
@@ -1094,7 +1164,7 @@ const App: React.FC = () => {
                  <button 
                     onClick={handleBluetoothConnect} 
                     disabled={isConnecting}
-                    className="toolbar-btn toolbar-btn-primary px-2 py-1.5 md:px-3 rounded font-bold text-xs md:text-sm flex items-center gap-1 disabled:opacity-40 disabled:cursor-not-allowed disabled:transform-none"
+                    className="toolbar-btn toolbar-btn-primary shrink-0 px-2 py-1.5 md:px-3 rounded font-bold text-xs md:text-sm flex items-center gap-1 disabled:opacity-40 disabled:cursor-not-allowed disabled:transform-none"
                  >
                     {isConnecting ? (
                         <Loader2 size={14} className="animate-spin md:w-4 md:h-4" />
@@ -1104,25 +1174,6 @@ const App: React.FC = () => {
                     <span className="inline">{isConnecting ? '...' : 'BLE'}</span>
                 </button>
                 </>
-            )}
-
-            {/* Show START button when Connected */}
-            {(status === RoastStatus.CONNECTED) && (
-                 <button onClick={handleStartRoast} className="toolbar-btn toolbar-btn-success px-3 md:px-4 py-1.5 rounded font-bold text-xs md:text-sm flex items-center gap-1 shadow-[0_0_10px_rgba(45,164,78,0.35)]">
-                   <Play size={14} className="md:w-4 md:h-4" /> 开始
-               </button>
-            )}
-
-            {status === RoastStatus.ROASTING && (
-                 <button onClick={handleStopRoast} className="toolbar-btn toolbar-btn-danger px-3 md:px-4 py-1.5 rounded font-bold text-xs md:text-sm flex items-center gap-1 shadow-[0_0_10px_rgba(207,34,46,0.35)]">
-                   <Square size={14} className="md:w-4 md:h-4" /> 下豆
-               </button>
-            )}
-
-            {status === RoastStatus.FINISHED && (
-                 <button onClick={handleReset} className="toolbar-btn px-3 py-1.5 rounded font-bold text-xs md:text-sm flex items-center gap-1">
-                   <RotateCcw size={14} className="md:w-4 md:h-4" /> 重置
-               </button>
             )}
         </div>
       </div>
