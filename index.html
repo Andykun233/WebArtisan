@@ -6,23 +6,156 @@
     <meta name="description" content="WebArtisan Roaster - Professional Coffee Roasting Dashboard" />
     <title>WebArtisan 烘焙大师</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Roboto:wght@300;400;500;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
-      body {
-        font-family: 'Roboto', "Microsoft YaHei", sans-serif;
-        background-color: #1c1c1c; /* Artisan Dark Grey */
-        color: #e0e0e0;
-        overflow: hidden; /* App-like feel */
-        touch-action: manipulation; /* Improves touch response */
+      :root {
+        --bg-deep: #0f1318;
+        --bg-mid: #151b22;
+        --bg-soft: #1b222b;
+        --panel-top: rgba(31, 39, 48, 0.86);
+        --panel-bottom: rgba(20, 25, 31, 0.9);
+        --line: #2f3944;
+        --line-strong: #445262;
+        --text-main: #e6edf3;
+        --text-muted: #93a1b2;
+        --text-dim: #6f7d8d;
+      }
+      html,
+      body,
+      #root {
         height: 100%;
         width: 100%;
       }
-      html {
-        height: 100%;
-        width: 100%;
+      body {
+        margin: 0;
+        font-family: 'Space Grotesk', 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+        color: var(--text-main);
+        overflow: hidden;
+        touch-action: manipulation;
+        background:
+          radial-gradient(1100px 420px at 10% -10%, rgba(255, 138, 48, 0.22), transparent 65%),
+          radial-gradient(1000px 420px at 100% 0%, rgba(88, 166, 255, 0.16), transparent 70%),
+          linear-gradient(160deg, var(--bg-mid) 0%, var(--bg-deep) 100%);
       }
       .font-mono {
         font-family: 'JetBrains Mono', monospace;
+      }
+      .app-shell {
+        position: relative;
+        isolation: isolate;
+      }
+      .app-shell::before {
+        content: '';
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        z-index: 0;
+        background:
+          linear-gradient(to bottom, rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+          linear-gradient(to right, rgba(255, 255, 255, 0.02) 1px, transparent 1px);
+        background-size: 100% 28px, 48px 100%;
+        opacity: 0.18;
+        mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0.8), transparent 75%);
+      }
+      .app-shell > * {
+        position: relative;
+        z-index: 1;
+      }
+      .top-toolbar {
+        background: linear-gradient(180deg, rgba(36, 44, 54, 0.95), rgba(25, 31, 38, 0.9));
+        border-bottom: 1px solid var(--line);
+        backdrop-filter: blur(10px);
+        box-shadow: 0 8px 30px rgba(0, 0, 0, 0.35);
+      }
+      .panel-surface {
+        background: linear-gradient(180deg, var(--panel-top), var(--panel-bottom));
+        border-color: var(--line) !important;
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04), 0 12px 28px rgba(0, 0, 0, 0.22);
+      }
+      .toolbar-btn {
+        background: linear-gradient(180deg, #323a45, #27303a);
+        border: 1px solid #485462;
+        color: #d4dee8;
+        transition: all 0.18s ease;
+      }
+      .toolbar-btn:hover {
+        transform: translateY(-1px);
+        border-color: #5d6d7f;
+        color: #f4f8fb;
+        box-shadow: 0 8px 18px rgba(0, 0, 0, 0.28);
+      }
+      .toolbar-btn-primary {
+        background: linear-gradient(180deg, #0e6ad4, #0a57ad);
+        border-color: rgba(122, 186, 255, 0.45);
+        color: #fff;
+      }
+      .toolbar-btn-success {
+        background: linear-gradient(180deg, #2fa96b, #237f50);
+        border-color: rgba(83, 234, 160, 0.28);
+        color: #fff;
+      }
+      .toolbar-btn-danger {
+        background: linear-gradient(180deg, #d8434a, #a72d34);
+        border-color: rgba(255, 126, 134, 0.28);
+        color: #fff;
+      }
+      .notice-error {
+        background: linear-gradient(90deg, rgba(173, 38, 49, 0.88), rgba(115, 22, 30, 0.82));
+        border-bottom: 1px solid rgba(255, 123, 133, 0.38);
+      }
+      .notice-success {
+        background: linear-gradient(90deg, rgba(36, 131, 82, 0.9), rgba(24, 88, 56, 0.86));
+        border-bottom: 1px solid rgba(96, 229, 162, 0.32);
+      }
+      .status-dot-online {
+        background: #37d686;
+        box-shadow: 0 0 0 4px rgba(55, 214, 134, 0.12), 0 0 12px rgba(55, 214, 134, 0.6);
+      }
+      .status-dot-offline {
+        background: #ff5d5d;
+        box-shadow: 0 0 0 4px rgba(255, 93, 93, 0.1), 0 0 10px rgba(255, 93, 93, 0.42);
+      }
+      .status-dot-connecting {
+        background: #f7c948;
+        box-shadow: 0 0 0 4px rgba(247, 201, 72, 0.12), 0 0 10px rgba(247, 201, 72, 0.42);
+      }
+      .stat-card {
+        background: linear-gradient(180deg, rgba(20, 24, 30, 0.96), rgba(12, 16, 21, 0.96));
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        overflow: hidden;
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03), 0 14px 22px rgba(0, 0, 0, 0.26);
+      }
+      .stat-card-head {
+        background: linear-gradient(180deg, rgba(35, 42, 51, 0.85), rgba(23, 30, 37, 0.85));
+        border-bottom: 1px solid #25303a;
+      }
+      .stat-card-body {
+        background: radial-gradient(circle at right top, rgba(255, 255, 255, 0.05), transparent 55%), #0d1117;
+      }
+      .chart-frame {
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: linear-gradient(180deg, rgba(9, 12, 16, 0.92), rgba(4, 6, 9, 0.95));
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04), 0 18px 30px rgba(0, 0, 0, 0.35);
+      }
+      .chart-hud {
+        background: linear-gradient(180deg, rgba(9, 11, 14, 0.82), rgba(5, 7, 10, 0.74));
+        border: 1px solid rgba(87, 101, 117, 0.7);
+        border-radius: 8px;
+        box-shadow: 0 8px 20px rgba(0, 0, 0, 0.32);
+      }
+      @keyframes pulseGlow {
+        0%,
+        100% {
+          opacity: 0.75;
+        }
+        50% {
+          opacity: 1;
+        }
+      }
+      .live-pulse {
+        animation: pulseGlow 2.2s ease-in-out infinite;
       }
       /* Custom Scrollbar for logs */
       ::-webkit-scrollbar {
@@ -30,14 +163,14 @@
         height: 8px;
       }
       ::-webkit-scrollbar-track {
-        background: #1c1c1c; 
+        background: #10141a; 
       }
       ::-webkit-scrollbar-thumb {
-        background: #444; 
+        background: #3f4b58; 
         border-radius: 4px;
       }
       ::-webkit-scrollbar-thumb:hover {
-        background: #555; 
+        background: #556171; 
       }
       /* Hide scrollbar for stats on mobile but keep functionality */
       .no-scrollbar::-webkit-scrollbar {

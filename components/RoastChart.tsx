@@ -66,21 +66,21 @@ const RoastChart: React.FC<RoastChartProps> = ({ data, events, currentBT, curren
   }
 
   return (
-    <div className="w-full h-full bg-black border border-[#333] relative overflow-hidden rounded-sm shadow-2xl">
+    <div className="chart-frame w-full h-full relative overflow-hidden">
       
       {/* Real-time HUD Overlay - Hidden on Mobile (md:block) - Centered */}
-      <div className="hidden md:block absolute top-2 left-1/2 -translate-x-1/2 z-10 bg-black/70 backdrop-blur-sm border border-[#444] rounded p-2 pointer-events-none shadow-lg">
+      <div className="chart-hud hidden md:block absolute top-2 left-1/2 -translate-x-1/2 z-10 p-2 pointer-events-none">
         <div className="flex gap-4 text-xs font-mono font-bold">
            <div className="flex flex-col items-center">
-              <span className="text-[#ff4d4d]">{currentBT.toFixed(1)}</span>
+              <span className="text-[#ff6b6b]">{currentBT.toFixed(1)}</span>
               <span className="text-gray-500 text-[9px]">BT (豆温)</span>
            </div>
            <div className="flex flex-col items-center">
-              <span className="text-[#4d94ff]">{currentET.toFixed(1)}</span>
+              <span className="text-[#58a6ff]">{currentET.toFixed(1)}</span>
               <span className="text-gray-500 text-[9px]">ET (炉温)</span>
            </div>
            <div className="flex flex-col items-center">
-              <span className="text-[#ffd700]">{currentRoR.toFixed(1)}</span>
+              <span className="text-[#ffd84d]">{currentRoR.toFixed(1)}</span>
               <span className="text-gray-500 text-[9px]">RoR (温升)</span>
            </div>
         </div>
@@ -89,12 +89,12 @@ const RoastChart: React.FC<RoastChartProps> = ({ data, events, currentBT, curren
       <ResponsiveContainer width="100%" height="100%">
         <LineChart margin={{ top: 20, right: 10, left: 0, bottom: 0 }} data={data}>
           {/* Artisan Dark Grid */}
-          <CartesianGrid strokeDasharray="3 3" stroke="#222" vertical={true} horizontal={true} />
+          <CartesianGrid strokeDasharray="3 3" stroke="#25313d" vertical={true} horizontal={true} />
           
           <XAxis 
             dataKey="time" 
-            stroke="#666" 
-            tick={{fontSize: 10, fill: '#666', fontFamily: 'JetBrains Mono'}}
+            stroke="#738295" 
+            tick={{fontSize: 10, fill: '#738295', fontFamily: 'JetBrains Mono'}}
             tickFormatter={(val) => `${Math.floor(val / 60)}:${(val % 60).toString().padStart(2, '0')}`}
             type="number"
             domain={['auto', 'auto']}
@@ -106,8 +106,8 @@ const RoastChart: React.FC<RoastChartProps> = ({ data, events, currentBT, curren
           {/* Left Axis: Temperature */}
           <YAxis 
             yAxisId="left" 
-            stroke="#888" 
-            tick={{fontSize: 10, fill: '#888', fontFamily: 'JetBrains Mono'}}
+            stroke="#97a6b8" 
+            tick={{fontSize: 10, fill: '#97a6b8', fontFamily: 'JetBrains Mono'}}
             domain={[0, maxTemp]}
             tickCount={8}
             width={35}
@@ -117,14 +117,14 @@ const RoastChart: React.FC<RoastChartProps> = ({ data, events, currentBT, curren
           <YAxis 
             yAxisId="right" 
             orientation="right" 
-            stroke="#d4af37" 
-            tick={{fontSize: 10, fill: '#d4af37', fontFamily: 'JetBrains Mono'}}
+            stroke="#e2c25d" 
+            tick={{fontSize: 10, fill: '#e2c25d', fontFamily: 'JetBrains Mono'}}
             domain={[-5, 'auto']} // Allows seeing crashes (negatives) and high spikes
             width={35}
           />
           
           <Tooltip 
-            contentStyle={{ backgroundColor: 'rgba(0,0,0,0.9)', borderColor: '#444', color: '#f1f5f9', fontFamily: 'JetBrains Mono', fontSize: '12px' }}
+            contentStyle={{ backgroundColor: 'rgba(7,10,13,0.94)', borderColor: '#4a5a6b', color: '#e6edf3', fontFamily: 'JetBrains Mono', fontSize: '12px', borderRadius: '8px' }}
             itemStyle={{ padding: 0 }}
             labelFormatter={(label) => typeof label === 'number' ? `${Math.floor(label / 60)}:${(label % 60).toString().padStart(2, '0')}` : label}
           />
@@ -136,7 +136,7 @@ const RoastChart: React.FC<RoastChartProps> = ({ data, events, currentBT, curren
                     data={backgroundData}
                     type="monotone" 
                     dataKey="bt" 
-                    stroke="#333" 
+                    stroke="#4a535f" 
                     strokeWidth={1} 
                     dot={false} 
                     strokeDasharray="4 4" 
@@ -148,7 +148,7 @@ const RoastChart: React.FC<RoastChartProps> = ({ data, events, currentBT, curren
                     data={backgroundData}
                     type="monotone" 
                     dataKey="et" 
-                    stroke="#222" 
+                    stroke="#3c4652" 
                     strokeWidth={1} 
                     dot={false} 
                     strokeDasharray="4 4" 
@@ -163,7 +163,7 @@ const RoastChart: React.FC<RoastChartProps> = ({ data, events, currentBT, curren
           <Line 
             type="monotone" 
             dataKey="bt" 
-            stroke="#ff4d4d" 
+            stroke="#ff6b6b" 
             strokeWidth={2} 
             dot={false} 
             yAxisId="left" 
@@ -175,7 +175,7 @@ const RoastChart: React.FC<RoastChartProps> = ({ data, events, currentBT, curren
             <Line 
                 type="monotone" 
                 dataKey="et" 
-                stroke="#4d94ff" 
+                stroke="#58a6ff" 
                 strokeWidth={2} 
                 dot={false} 
                 yAxisId="left" 
@@ -187,7 +187,7 @@ const RoastChart: React.FC<RoastChartProps> = ({ data, events, currentBT, curren
           <Line 
             type="monotone" 
             dataKey="ror" 
-            stroke="#ffd700" 
+            stroke="#ffd84d" 
             strokeWidth={1} 
             dot={false} 
             yAxisId="right" 
@@ -204,7 +204,7 @@ const RoastChart: React.FC<RoastChartProps> = ({ data, events, currentBT, curren
                 y={point.ror}
                 yAxisId="right"
                 r={3}
-                fill={point.type === 'peak' ? '#ff9900' : '#00ffff'}
+                fill={point.type === 'peak' ? '#ff9b3f' : '#26c6da'}
                 stroke="none"
              />
           ))}
@@ -214,13 +214,13 @@ const RoastChart: React.FC<RoastChartProps> = ({ data, events, currentBT, curren
             <ReferenceLine 
                 key={`evt-${index}`} 
                 x={event.time} 
-                stroke="#666" 
+                stroke="#738295" 
                 yAxisId="left" 
                 strokeDasharray="3 3"
                 label={{ 
                     value: event.label, 
                     position: 'insideTopLeft', 
-                    fill: '#888', 
+                    fill: '#8ea0b3', 
                     fontSize: 10,
                     className: 'font-mono'
                 }}
