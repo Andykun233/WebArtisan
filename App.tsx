@@ -318,6 +318,9 @@ const App: React.FC = () => {
   // Export Modal State
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
   const [exportFileName, setExportFileName] = useState("");
+  
+  // Mobile Event Panel State
+  const [isMobileEventsExpanded, setIsMobileEventsExpanded] = useState(false);
 
   const handleDataUpdate = useCallback((bt: number, et: number) => {
     // Update Refs for logic
@@ -531,6 +534,13 @@ const App: React.FC = () => {
           websocketService.disconnect();
       }
   }, []);
+
+  // Keep mobile event panel compact outside roasting mode
+  useEffect(() => {
+    if (status !== RoastStatus.ROASTING) {
+      setIsMobileEventsExpanded(false);
+    }
+  }, [status]);
 
   const handleEvent = (label: string) => {
     if (status !== RoastStatus.ROASTING || !startTime) return;
@@ -908,6 +918,11 @@ const App: React.FC = () => {
     },
   ];
 
+  const primaryMobileEventButtons = eventButtons.slice(0, 3);
+  const secondaryMobileEventButtons = eventButtons.slice(3);
+  const orderedEventLabels = ["入豆", "脱水结束", "一爆开始", "一爆结束", "二爆开始", "二爆结束"];
+  const nextEventHint = orderedEventLabels.find(label => !hasEvent(label)) || "流程完成";
+
   // Logic for status color
   const getStatusColor = () => {
       if (isConnecting) return 'status-dot-connecting live-pulse';
@@ -1214,31 +1229,98 @@ const App: React.FC = () => {
             flex flex-col md:flex-col gap-2 shrink-0 
             pb-safe md:pb-2 z-20
         ">
+             {/* Mobile Event Layout: Primary events + expandable secondary events */}
+             <div className="md:hidden flex flex-col gap-1.5 mb-safe-offset">
+                 <div className="flex items-center justify-between px-0.5">
+                     <div className="text-[10px] font-semibold text-[#8ea0b3] uppercase tracking-[0.14em]">事件快捷</div>
+                     <div className="flex items-center gap-1.5">
+                         <span className="text-[9px] text-[#6e8398] font-mono">
+                           {status === RoastStatus.ROASTING ? `下一步: ${nextEventHint}` : "待机"}
+                         </span>
+                         <button
+                           onClick={() => setIsMobileEventsExpanded(prev => !prev)}
+                           className="toolbar-btn text-[9px] px-2 py-1 rounded text-gray-300"
+                         >
+                           {isMobileEventsExpanded ? "收起事件" : "更多事件"}
+                         </button>
+                     </div>
+                 </div>
+
+                 <div className="grid grid-cols-3 gap-1.5">
+                     {primaryMobileEventButtons.map((btn) => {
+                         const isActive = hasEvent(btn.label);
+
+                         return (
+                           <button
+                             key={`${btn.label}-mobile-primary`}
+                             onClick={btn.action}
+                             disabled={status !== RoastStatus.ROASTING || btn.disabled}
+                             className={`
+                               w-full py-2.5 font-semibold text-[10px] rounded-md transition-all border select-none active:scale-95 touch-manipulation tracking-wide
+                               ${status !== RoastStatus.ROASTING || btn.disabled
+                                 ? 'bg-[#262e37] text-[#5d6a79] border-[#2e3844] shadow-none'
+                                 : isActive
+                                   ? `${btn.bgClass} text-white border-transparent shadow-[inset_0_1px_0_rgba(255,255,255,0.2),0_8px_14px_rgba(0,0,0,0.25)]`
+                                   : `bg-[#1a2129]/70 ${btn.borderClass} hover:bg-[#23303d] active:bg-[#2a3644]`
+                               }
+                             `}
+                           >
+                             {btn.label}
+                           </button>
+                         );
+                     })}
+                 </div>
+
+                 {isMobileEventsExpanded && (
+                   <div className="grid grid-cols-3 gap-1.5 pt-0.5">
+                     {secondaryMobileEventButtons.map((btn) => {
+                       const isActive = hasEvent(btn.label);
+
+                       return (
+                         <button
+                           key={`${btn.label}-mobile-secondary`}
+                           onClick={btn.action}
+                           disabled={status !== RoastStatus.ROASTING || btn.disabled}
+                           className={`
+                             w-full py-2.5 font-semibold text-[10px] rounded-md transition-all border select-none active:scale-95 touch-manipulation tracking-wide
+                             ${status !== RoastStatus.ROASTING || btn.disabled
+                               ? 'bg-[#262e37] text-[#5d6a79] border-[#2e3844] shadow-none'
+                               : isActive
+                                 ? `${btn.bgClass} text-white border-transparent shadow-[inset_0_1px_0_rgba(255,255,255,0.2),0_8px_14px_rgba(0,0,0,0.25)]`
+                                 : `bg-[#1a2129]/70 ${btn.borderClass} hover:bg-[#23303d] active:bg-[#2a3644]`
+                             }
+                           `}
+                         >
+                           {btn.label}
+                         </button>
+                       );
+                     })}
+                   </div>
+                 )}
+             </div>
+
              <div className="hidden md:block text-[11px] font-semibold text-[#8ea0b3] uppercase tracking-[0.15em] mb-1 text-center">事件标记</div>
-             
-             {/* Mobile: Grid Layout for Buttons */}
-             {/* Optimized for minimal height on mobile to allow chart space */}
-             <div className="grid grid-cols-3 md:flex md:flex-col gap-1.5 md:gap-2 mb-safe-offset">
-                 {eventButtons.map((btn, idx) => {
+             <div className="hidden md:flex md:flex-col gap-2">
+                 {eventButtons.map((btn) => {
                      const isActive = hasEvent(btn.label);
-                     
+
                      return (
-                        <button
-                            key={idx}
-                            onClick={btn.action}
-                            disabled={status !== RoastStatus.ROASTING || btn.disabled}
-                            className={`
-                                w-full py-2.5 md:py-3 font-semibold text-[10px] md:text-xs rounded-md transition-all border select-none active:scale-95 touch-manipulation tracking-wide
-                                ${status !== RoastStatus.ROASTING || btn.disabled 
-                                    ? 'bg-[#262e37] text-[#5d6a79] border-[#2e3844] shadow-none' 
-                                    : isActive 
-                                        ? `${btn.bgClass} text-white border-transparent shadow-[inset_0_1px_0_rgba(255,255,255,0.2),0_8px_14px_rgba(0,0,0,0.25)]` // Active State
-                                        : `bg-[#1a2129]/70 ${btn.borderClass} hover:bg-[#23303d] active:bg-[#2a3644]` // Available State
-                                }
-                            `}
-                        >
-                            {btn.label}
-                        </button>
+                       <button
+                         key={`${btn.label}-desktop`}
+                         onClick={btn.action}
+                         disabled={status !== RoastStatus.ROASTING || btn.disabled}
+                         className={`
+                           w-full py-3 font-semibold text-xs rounded-md transition-all border select-none active:scale-95 touch-manipulation tracking-wide
+                           ${status !== RoastStatus.ROASTING || btn.disabled
+                             ? 'bg-[#262e37] text-[#5d6a79] border-[#2e3844] shadow-none'
+                             : isActive
+                               ? `${btn.bgClass} text-white border-transparent shadow-[inset_0_1px_0_rgba(255,255,255,0.2),0_8px_14px_rgba(0,0,0,0.25)]`
+                               : `bg-[#1a2129]/70 ${btn.borderClass} hover:bg-[#23303d] active:bg-[#2a3644]`
+                           }
+                         `}
+                       >
+                         {btn.label}
+                       </button>
                      );
                  })}
              </div>
