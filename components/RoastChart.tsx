@@ -68,6 +68,20 @@ const RoastChart: React.FC<RoastChartProps> = ({ data, events, currentBT, curren
   return (
     <div className="chart-frame w-full h-full relative overflow-hidden">
       
+      {/* Reference Curve Legend */}
+      {backgroundData.length > 0 && (
+        <div className="absolute top-2 left-2 z-10 bg-[#0b121a]/80 border border-[#3a4a5c] rounded px-2 py-1.5 text-[10px] font-mono text-[#a8b7c8] flex items-center gap-3 pointer-events-none">
+          <div className="flex items-center gap-1.5">
+            <span className="inline-block w-5 h-0 border-t-2 border-dashed border-[#ff9f9f] opacity-80"></span>
+            <span>参考 BT</span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <span className="inline-block w-5 h-0 border-t-2 border-dotted border-[#86bcff] opacity-80"></span>
+            <span>参考 ET</span>
+          </div>
+        </div>
+      )}
+
       {/* Real-time HUD Overlay - Hidden on Mobile (md:block) - Centered */}
       <div className="chart-hud hidden md:block absolute top-2 left-1/2 -translate-x-1/2 z-10 p-2 pointer-events-none">
         <div className="flex gap-4 text-xs font-mono font-bold">
@@ -136,24 +150,26 @@ const RoastChart: React.FC<RoastChartProps> = ({ data, events, currentBT, curren
                     data={backgroundData}
                     type="monotone" 
                     dataKey="bt" 
-                    stroke="#4a535f" 
-                    strokeWidth={1} 
+                    stroke="#ff9f9f"
+                    strokeOpacity={0.55}
+                    strokeWidth={1.5}
                     dot={false} 
-                    strokeDasharray="4 4" 
+                    strokeDasharray="6 4" 
                     yAxisId="left" 
-                    name="Ref BT" 
+                    name="参考 BT" 
                     isAnimationActive={false}
                 />
                 <Line 
                     data={backgroundData}
                     type="monotone" 
                     dataKey="et" 
-                    stroke="#3c4652" 
-                    strokeWidth={1} 
+                    stroke="#86bcff"
+                    strokeOpacity={0.5}
+                    strokeWidth={1.5}
                     dot={false} 
-                    strokeDasharray="4 4" 
+                    strokeDasharray="2 5" 
                     yAxisId="left" 
-                    name="Ref ET" 
+                    name="参考 ET" 
                     isAnimationActive={false}
                 />
              </>

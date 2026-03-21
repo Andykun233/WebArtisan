@@ -607,7 +607,7 @@ const App: React.FC = () => {
   };
 
   const handleStartRoast = () => {
-    if (status !== RoastStatus.CONNECTED) {
+    if (status !== RoastStatus.CONNECTED || !activeService) {
       setErrorMsg("请先连接设备，再开始烘焙");
       setTimeout(() => setErrorMsg(null), 2500);
       return;
@@ -674,10 +674,8 @@ const App: React.FC = () => {
     setShowUndoDrop(false);
     if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
 
-    // If still connected (not IDLE), go to CONNECTED (was preheating). If IDLE, stay IDLE.
-    if (status !== RoastStatus.IDLE) {
-        setStatus(RoastStatus.CONNECTED);
-    }
+    // Return to connected state only when a real service is still active.
+    setStatus(activeService ? RoastStatus.CONNECTED : RoastStatus.IDLE);
     
     setData([]);
     dataRef.current = [];
@@ -1082,18 +1080,19 @@ const App: React.FC = () => {
   const secondaryMobileEventButtons = eventButtons.slice(3);
   const orderedEventLabels = ["入豆", "脱水结束", "一爆开始", "一爆结束", "二爆开始", "二爆结束"];
   const nextEventHint = orderedEventLabels.find(label => !hasEvent(label)) || "流程完成";
+  const isDeviceConnected = activeService !== null;
 
   // Logic for status color
   const getStatusColor = () => {
       if (isConnecting) return 'status-dot-connecting live-pulse';
-      if (status !== RoastStatus.IDLE) return 'status-dot-online'; // Green for Connected/Roasting
+      if (isDeviceConnected) return 'status-dot-online';
       return 'status-dot-offline';
   };
 
   const getStatusText = () => {
       if (isConnecting) return '正在连接...';
-      if (status === RoastStatus.IDLE) return '未连接';
-      return '设备在线';
+      if (isDeviceConnected) return '设备在线';
+      return '未连接';
   };
 
   const getModeText = () => {
@@ -1189,20 +1188,20 @@ const App: React.FC = () => {
               {/* Tooltip Popup */}
               <div className="absolute top-full left-0 mt-1 w-52 p-2.5 bg-[#0a1119]/95 backdrop-blur border border-[#425161] rounded shadow-xl opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50 text-[10px] text-gray-300 transform origin-top-left">
                 <div className="font-bold text-white mb-1 border-b border-[#2c3a48] pb-1 tracking-wider">系统状态</div>
-                <div className="flex flex-col gap-1">
+                  <div className="flex flex-col gap-1">
                   <div>
-                    状态: <span className={status !== RoastStatus.IDLE ? 'text-green-400' : 'text-red-400'}>
-                      {isConnecting ? '初始化中...' : status === RoastStatus.IDLE ? '等待连接' : '已就绪'}
+                    状态: <span className={isDeviceConnected ? 'text-green-400' : 'text-red-400'}>
+                      {isConnecting ? '初始化中...' : isDeviceConnected ? '已就绪' : '等待连接'}
                     </span>
                   </div>
-                  {status !== RoastStatus.IDLE && (
+                  {isDeviceConnected && (
                     <>
                       <div>设备: {deviceName || '未知'}</div>
                       <div>模式: {getModeText()}</div>
                       <div className="flex items-center gap-1">信号: <Signal size={10} className="text-green-500"/> 强</div>
                     </>
                   )}
-                  {status === RoastStatus.IDLE && !isConnecting && (
+                  {!isDeviceConnected && !isConnecting && (
                     <div className="text-gray-500 italic">请点击右侧按钮连接设备</div>
                   )}
                 </div>
@@ -1228,9 +1227,9 @@ const App: React.FC = () => {
             ) : (
               <button
                 onClick={handleStartRoast}
-                disabled={status !== RoastStatus.CONNECTED || isConnecting}
+                disabled={status !== RoastStatus.CONNECTED || isConnecting || !isDeviceConnected}
                 className={`toolbar-btn toolbar-btn-success shrink-0 px-3 md:px-4 py-1.5 rounded font-bold text-xs md:text-sm flex items-center gap-1 ${
-                  status !== RoastStatus.CONNECTED || isConnecting
+                  status !== RoastStatus.CONNECTED || isConnecting || !isDeviceConnected
                     ? 'opacity-45 cursor-not-allowed shadow-none'
                     : 'shadow-[0_0_10px_rgba(45,164,78,0.35)]'
                 }`}
@@ -1253,7 +1252,7 @@ const App: React.FC = () => {
               <span className="hidden md:inline text-xs">背景</span>
             </button>
 
-            {status === RoastStatus.IDLE && (
+            {!isDeviceConnected && (
               <>
                 <button
                   onClick={handleWebSocketConnect}
@@ -1310,7 +1309,9 @@ const App: React.FC = () => {
                   Web<span className="text-orange-400">Artisan</span>
                 </div>
                 <div className="text-[9px] text-[#8ea0b3] font-mono truncate">
-                  {status === RoastStatus.IDLE ? '设备未连接' : `${deviceName || '设备在线'} · ${getModeText()}`}
+                  {!isDeviceConnected
+                    ? (data.length > 0 ? '回放模式（未连接设备）' : '设备未连接')
+                    : `${deviceName || '设备在线'} · ${getModeText()}`}
                 </div>
               </div>
               <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${getStatusColor()}`}></span>
@@ -1333,9 +1334,9 @@ const App: React.FC = () => {
             ) : (
               <button
                 onClick={handleStartRoast}
-                disabled={status !== RoastStatus.CONNECTED || isConnecting}
+                disabled={status !== RoastStatus.CONNECTED || isConnecting || !isDeviceConnected}
                 className={`toolbar-btn toolbar-btn-success shrink-0 px-3 py-1.5 rounded font-bold text-xs flex items-center gap-1 ${
-                  status !== RoastStatus.CONNECTED || isConnecting
+                  status !== RoastStatus.CONNECTED || isConnecting || !isDeviceConnected
                     ? 'opacity-45 cursor-not-allowed shadow-none'
                     : 'shadow-[0_0_8px_rgba(45,164,78,0.35)]'
                 }`}
@@ -1345,7 +1346,7 @@ const App: React.FC = () => {
             )}
           </div>
 
-          {status === RoastStatus.IDLE ? (
+          {!isDeviceConnected ? (
             <div className="grid grid-cols-3 gap-1.5">
               <button
                 onClick={handleWebSocketConnect}
