@@ -25,8 +25,26 @@ export class WebSocketService {
         this.onErrorCallback = onError || null;
 
         try {
-            // Ensure protocol is present
-            const fullUrl = url.includes('://') ? url : `ws://${url}`;
+            const input = url.trim();
+            if (!input) {
+                reject(new Error("WebSocket 地址不能为空"));
+                return;
+            }
+
+            const isHttpsPage = typeof window !== 'undefined' && window.location.protocol === 'https:';
+
+            // If protocol is omitted, follow page security context:
+            // https page -> wss, http page -> ws.
+            const fullUrl = input.includes('://')
+                ? input
+                : `${isHttpsPage ? 'wss' : 'ws'}://${input}`;
+
+            // Mixed-content guard: HTTPS pages cannot open ws:// sockets.
+            if (isHttpsPage && fullUrl.startsWith('ws://')) {
+                reject(new Error("当前页面是 HTTPS（如 Netlify），不能连接 ws://。请改用 wss:// 地址，或在本地 http:// 页面访问。"));
+                return;
+            }
+
             console.log(`Connecting to WebSocket: ${fullUrl}`);
             
             this.ws = new WebSocket(fullUrl);

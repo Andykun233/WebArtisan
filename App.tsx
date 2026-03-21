@@ -648,8 +648,12 @@ const App: React.FC = () => {
     setRawLogs([]);
     rawLogsRef.current = [];
 
-    const defaultUrl = "localhost:8080";
-    const input = window.prompt("请输入 WebSocket 地址\nArtisan 默认端口: 8080", defaultUrl);
+    const isHttpsPage = window.location.protocol === 'https:';
+    const defaultUrl = isHttpsPage ? "wss://localhost:80" : "localhost:80";
+    const promptText = isHttpsPage
+      ? "请输入 WebSocket 地址（HTTPS 页面请使用 wss://）\nArtisan 默认端口: 80"
+      : "请输入 WebSocket 地址\nArtisan 默认端口: 80";
+    const input = window.prompt(promptText, defaultUrl);
 
     if (input === null) {
         setIsConnecting(false);
