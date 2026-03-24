@@ -1,6 +1,7 @@
 import React, { ReactNode } from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App';
+import './styles.css';
 
 const rootElement = document.getElementById('root');
 if (!rootElement) {
@@ -86,3 +87,38 @@ root.render(
     </ErrorBoundary>
   </React.StrictMode>
 );
+
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    let isRefreshing = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (isRefreshing) return;
+      isRefreshing = true;
+      window.location.reload();
+    });
+
+    navigator.serviceWorker
+      .register('/sw.js')
+      .then((registration) => {
+        registration.update().catch(() => undefined);
+
+        if (registration.waiting) {
+          registration.waiting.postMessage({ type: 'SKIP_WAITING' });
+        }
+
+        registration.addEventListener('updatefound', () => {
+          const newWorker = registration.installing;
+          if (!newWorker) return;
+
+          newWorker.addEventListener('statechange', () => {
+            if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+              newWorker.postMessage({ type: 'SKIP_WAITING' });
+            }
+          });
+        });
+      })
+      .catch((err) => {
+        console.warn('Service Worker 注册失败:', err);
+      });
+  });
+}

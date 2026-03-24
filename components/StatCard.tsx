@@ -6,9 +6,10 @@ interface StatCardProps {
   unit?: string;
   color?: 'red' | 'blue' | 'yellow' | 'green' | 'slate' | 'cyan';
   subValue?: string;
+  compact?: boolean;
 }
 
-const StatCard: React.FC<StatCardProps> = ({ label, value, unit, color = 'slate', subValue }) => {
+const StatCard: React.FC<StatCardProps> = ({ label, value, unit, color = 'slate', subValue, compact = false }) => {
   // Artisan Style Colors
   const colors = {
     red: { text: 'text-[#ff6b6b]', border: 'border-[#ff6b6b]', dot: 'bg-[#ff6b6b]' }, // BT
@@ -23,19 +24,19 @@ const StatCard: React.FC<StatCardProps> = ({ label, value, unit, color = 'slate'
 
   return (
     <div className={`stat-card w-full mb-2 border-l-2 ${activeColor.border}`}>
-        <div className="stat-card-head flex justify-between items-center px-2.5 py-1.5">
-            <span className="text-[10px] uppercase font-semibold tracking-[0.16em] text-gray-400 flex items-center gap-1.5">
-              <span className={`h-1.5 w-1.5 rounded-full ${activeColor.dot} live-pulse`}></span>
+        <div className={`stat-card-head flex justify-between items-center ${compact ? 'px-2 py-1' : 'px-2.5 py-1.5'}`}>
+            <span className={`${compact ? 'text-[9px] tracking-[0.13em]' : 'text-[10px] tracking-[0.16em]'} uppercase font-semibold text-gray-400 flex items-center gap-1.5`}>
+              <span className={`${compact ? 'h-1.5 w-1.5' : 'h-1.5 w-1.5'} rounded-full ${activeColor.dot} live-pulse`}></span>
               {label}
             </span>
-            {unit && <span className="text-[10px] text-gray-500 font-mono">{unit}</span>}
+            {unit && <span className={`${compact ? 'text-[9px]' : 'text-[10px]'} text-gray-500 font-mono`}>{unit}</span>}
         </div>
-        <div className="stat-card-body px-2.5 py-2.5 flex flex-col items-end justify-center border-t border-[#1f2730]">
-            <div className={`text-[2rem] md:text-[2.1rem] font-mono font-bold leading-none tracking-tight ${activeColor.text}`}>
+        <div className={`stat-card-body ${compact ? 'px-2 py-1.5' : 'px-2.5 py-2.5'} flex flex-col items-end justify-center border-t border-[#1f2730]`}>
+            <div className={`${compact ? 'text-[1.45rem]' : 'text-[2rem] md:text-[2.1rem]'} font-mono font-bold leading-none tracking-tight ${activeColor.text}`}>
                 {value}
             </div>
              {subValue && (
-                <div className="text-[11px] text-gray-500 font-mono mt-1 text-right">
+                <div className={`${compact ? 'text-[9px] mt-0.5' : 'text-[11px] mt-1'} text-gray-500 font-mono text-right`}>
                     {subValue}
                 </div>
             )}

@@ -18,29 +18,95 @@ interface RoastChartProps {
   currentBT: number;
   currentET: number;
   currentRoR: number;
+  currentETRoR?: number;
   backgroundData?: DataPoint[]; // New prop for background curve
   showLiveET?: boolean;
   showBackgroundET?: boolean;
+  showBtRoR?: boolean;
+  showEtRoR?: boolean;
+  compactMode?: boolean;
 }
 
 const ET_PRESENT_THRESHOLD = 1.0;
+const MIN_TEMP_SPAN = 120;
+const MIN_ROR_SPAN = 20;
+const X_AXIS_BASE_SECONDS = 10 * 60; // Keep timeline fixed at 10 min until data exceeds it.
+const TEMP_AXIS_BASE_MAX = 300; // Keep temp axis fixed at 300C until data exceeds it.
 
-const RoastChart: React.FC<RoastChartProps> = ({ data, events, currentBT, currentET, currentRoR, backgroundData = [], showLiveET, showBackgroundET }) => {
-  // Calculate domains to make chart look nicer, keeping a minimum range
-  // Must consider both current data AND background data to scale axes correctly
+const formatClock = (seconds: number) => {
+  const safe = Number.isFinite(seconds) ? Math.max(0, Math.round(seconds)) : 0;
+  const mm = Math.floor(safe / 60);
+  const ss = safe % 60;
+  return `${mm}:${ss.toString().padStart(2, '0')}`;
+};
+
+const RoastChart: React.FC<RoastChartProps> = ({
+  data,
+  events,
+  currentBT,
+  currentET,
+  currentRoR,
+  currentETRoR = 0,
+  backgroundData = [],
+  showLiveET,
+  showBackgroundET,
+  showBtRoR,
+  showEtRoR,
+  compactMode = false
+}) => {
+  // Must consider both live and reference curves to scale axes correctly.
   const hasDetectedLiveET = currentET > ET_PRESENT_THRESHOLD || data.some((d) => Number.isFinite(d.et) && d.et > ET_PRESENT_THRESHOLD);
   const hasDetectedBackgroundET = backgroundData.some((d) => Number.isFinite(d.et) && d.et > ET_PRESENT_THRESHOLD);
   const hasLiveET = showLiveET ?? hasDetectedLiveET;
   const hasBackgroundET = showBackgroundET ?? hasDetectedBackgroundET;
+  const displayBtRoR = showBtRoR ?? true;
+  const hasDetectedEtRoR = data.some((d) => Number.isFinite(d.et_ror ?? NaN));
+  const displayEtRoR = (showEtRoR ?? true) && hasLiveET && hasDetectedEtRoR;
+  const displayAnyRoR = displayBtRoR || displayEtRoR;
 
   const tempPoints = [
     ...data.map((d) => d.bt),
     ...backgroundData.map((d) => d.bt),
     ...(hasLiveET ? data.map((d) => d.et) : []),
     ...(hasBackgroundET ? backgroundData.map((d) => d.et) : []),
-  ];
+  ].filter((value) => Number.isFinite(value));
 
-  const maxTemp = tempPoints.length > 0 ? Math.max(...tempPoints) + 10 : 250;
+  const positiveTemps = tempPoints.filter((value) => value > 0);
+  const tempMinRaw = positiveTemps.length > 0 ? Math.min(...positiveTemps) : 0;
+  const tempMaxRaw = positiveTemps.length > 0 ? Math.max(...positiveTemps) : 250;
+  const tempMinCandidate = Math.max(0, Math.floor((tempMinRaw - 15) / 10) * 10);
+  const tempMin =
+    tempMaxRaw <= TEMP_AXIS_BASE_MAX
+      ? Math.min(tempMinCandidate, TEMP_AXIS_BASE_MAX - MIN_TEMP_SPAN)
+      : tempMinCandidate;
+  const tempMax =
+    tempMaxRaw <= TEMP_AXIS_BASE_MAX
+      ? TEMP_AXIS_BASE_MAX
+      : Math.max(
+          tempMin + MIN_TEMP_SPAN,
+          Math.ceil((tempMaxRaw + 12) / 10) * 10
+        );
+
+  const rorPoints = [
+    ...(displayBtRoR ? data.map((d) => d.ror) : []),
+    ...(displayBtRoR ? backgroundData.map((d) => d.ror) : []),
+    ...(displayEtRoR ? data.map((d) => d.et_ror ?? NaN) : []),
+  ].filter((value) => Number.isFinite(value));
+
+  const rorMinRaw = rorPoints.length > 0 ? Math.min(...rorPoints) : -5;
+  const rorMaxRaw = rorPoints.length > 0 ? Math.max(...rorPoints) : 35;
+  const rorMin = Math.min(-5, Math.floor((rorMinRaw - 2) / 5) * 5);
+  const rorMax = Math.max(
+    15,
+    rorMin + MIN_ROR_SPAN,
+    Math.ceil((rorMaxRaw + 2) / 5) * 5
+  );
+
+  const allTimes = [...data.map((d) => d.time), ...backgroundData.map((d) => d.time)];
+  const maxTimeRaw = allTimes.length > 0 ? Math.max(...allTimes) : 0;
+  const xAxisMax = Math.max(X_AXIS_BASE_SECONDS, Math.ceil((maxTimeRaw + 15) / 30) * 30);
+  const xTickStep = xAxisMax <= 10 * 60 ? 60 : xAxisMax <= 20 * 60 ? 120 : 180;
+  const xTicks = Array.from({ length: Math.floor(xAxisMax / xTickStep) + 1 }, (_, i) => i * xTickStep);
 
   // Determine if we should show the ET line (hide if all 0/missing)
   // Live and background are intentionally separated to avoid showing one because of the other.
@@ -77,11 +143,32 @@ const RoastChart: React.FC<RoastChartProps> = ({ data, events, currentBT, curren
     }
   }
 
+  // Prevent event labels from stacking when events are very close in time.
+  const labeledEventIndexes = new Set<number>();
+  let lastLabeledAt = -Infinity;
+  events.forEach((event, index) => {
+    const isBoundary = index === 0 || index === events.length - 1;
+    const isKeyMilestone = /(入豆|下豆|一爆|二爆|CHARGE|DROP|FC|SC)/i.test(event.label);
+    if (isBoundary || isKeyMilestone || event.time - lastLabeledAt >= 35) {
+      labeledEventIndexes.add(index);
+      lastLabeledAt = event.time;
+    }
+  });
+
+  const tooltipValueFormatter = (value: number | string, name: string) => {
+    const numeric = typeof value === 'number' && Number.isFinite(value) ? value : Number(value);
+    const display = Number.isFinite(numeric) ? numeric.toFixed(1) : `${value}`;
+    const unit = /RoR/i.test(name) ? '°/min' : '°C';
+    return [`${display} ${unit}`, name];
+  };
+
+  const latestLivePoint = data.length > 0 ? data[data.length - 1] : null;
+
   return (
     <div className="chart-frame w-full h-full relative overflow-hidden">
       
       {/* Reference Curve Legend */}
-      {backgroundData.length > 0 && (
+      {backgroundData.length > 0 && !compactMode && (
         <div className="absolute top-2 left-2 z-10 bg-[#0b121a]/80 border border-[#3a4a5c] rounded px-2 py-1.5 text-[10px] font-mono text-[#a8b7c8] flex items-center gap-3 pointer-events-none">
           <div className="flex items-center gap-1.5">
             <span className="inline-block w-5 h-0 border-t-2 border-dashed border-[#ff9f9f] opacity-80"></span>
@@ -93,15 +180,17 @@ const RoastChart: React.FC<RoastChartProps> = ({ data, events, currentBT, curren
               <span>参考 ET</span>
             </div>
           )}
-          <div className="flex items-center gap-1.5">
-            <span className="inline-block w-5 h-0 border-t border-dashed border-[#ffe08a] opacity-80"></span>
-            <span>参考 RoR</span>
-          </div>
+          {displayBtRoR && (
+            <div className="flex items-center gap-1.5">
+              <span className="inline-block w-5 h-0 border-t border-dashed border-[#ffe08a] opacity-80"></span>
+              <span>参考 RoR</span>
+            </div>
+          )}
         </div>
       )}
 
       {/* Real-time HUD Overlay - Hidden on Mobile (md:block) - Centered */}
-      <div className="chart-hud hidden md:block absolute top-2 left-1/2 -translate-x-1/2 z-10 p-2 pointer-events-none">
+      <div className={`${compactMode ? 'hidden' : 'hidden md:block'} chart-hud absolute top-2 left-1/2 -translate-x-1/2 z-10 p-2 pointer-events-none`}>
         <div className="flex gap-4 text-xs font-mono font-bold">
            <div className="flex flex-col items-center">
               <span className="text-[#ff6b6b]">{currentBT.toFixed(1)}</span>
@@ -113,54 +202,71 @@ const RoastChart: React.FC<RoastChartProps> = ({ data, events, currentBT, curren
                 <span className="text-gray-500 text-[9px]">ET (炉温)</span>
              </div>
            )}
-           <div className="flex flex-col items-center">
-              <span className="text-[#ffd84d]">{currentRoR.toFixed(1)}</span>
-              <span className="text-gray-500 text-[9px]">RoR (温升)</span>
-           </div>
+           {displayBtRoR && (
+             <div className="flex flex-col items-center">
+                <span className="text-[#ffd84d]">{currentRoR.toFixed(1)}</span>
+                <span className="text-gray-500 text-[9px]">BT RoR</span>
+             </div>
+           )}
+           {displayEtRoR && (
+             <div className="flex flex-col items-center">
+                <span className="text-[#59d2ff]">{currentETRoR.toFixed(1)}</span>
+                <span className="text-gray-500 text-[9px]">ET RoR</span>
+             </div>
+           )}
         </div>
       </div>
 
       <ResponsiveContainer width="100%" height="100%">
-        <LineChart margin={{ top: 20, right: 10, left: 0, bottom: 0 }} data={data}>
+        <LineChart margin={compactMode ? { top: 10, right: 8, left: 0, bottom: 2 } : { top: 20, right: 12, left: 0, bottom: 4 }} data={data}>
           {/* Artisan Dark Grid */}
           <CartesianGrid strokeDasharray="3 3" stroke="#25313d" vertical={true} horizontal={true} />
           
           <XAxis 
             dataKey="time" 
             stroke="#738295" 
-            tick={{fontSize: 10, fill: '#738295', fontFamily: 'JetBrains Mono'}}
-            tickFormatter={(val) => `${Math.floor(val / 60)}:${(val % 60).toString().padStart(2, '0')}`}
+            tick={{fontSize: compactMode ? 9 : 10, fill: '#738295', fontFamily: 'JetBrains Mono'}}
+            tickFormatter={(val) => formatClock(Number(val))}
             type="number"
-            domain={['auto', 'auto']}
-            allowDataOverflow={true}
-            minTickGap={30}
-            height={20}
+            domain={[0, xAxisMax]}
+            ticks={xTicks}
+            allowDataOverflow={false}
+            minTickGap={compactMode ? 16 : 24}
+            height={compactMode ? 20 : 24}
+            tickMargin={compactMode ? 4 : 6}
           />
           
           {/* Left Axis: Temperature */}
           <YAxis 
             yAxisId="left" 
             stroke="#97a6b8" 
-            tick={{fontSize: 10, fill: '#97a6b8', fontFamily: 'JetBrains Mono'}}
-            domain={[0, maxTemp]}
-            tickCount={8}
-            width={35}
+            tick={{fontSize: compactMode ? 9 : 10, fill: '#97a6b8', fontFamily: 'JetBrains Mono'}}
+            domain={[tempMin, tempMax]}
+            tickCount={7}
+            width={compactMode ? 36 : 42}
+            tickMargin={compactMode ? 2 : 4}
           />
           
           {/* Right Axis: RoR */}
-          <YAxis 
-            yAxisId="right" 
-            orientation="right" 
-            stroke="#e2c25d" 
-            tick={{fontSize: 10, fill: '#e2c25d', fontFamily: 'JetBrains Mono'}}
-            domain={[-5, 'auto']} // Allows seeing crashes (negatives) and high spikes
-            width={35}
-          />
+          {displayAnyRoR && (
+            <YAxis 
+              yAxisId="right" 
+              orientation="right" 
+              stroke="#e2c25d" 
+              tick={{fontSize: compactMode ? 9 : 10, fill: '#e2c25d', fontFamily: 'JetBrains Mono'}}
+              domain={[rorMin, rorMax]}
+              tickCount={7}
+              width={compactMode ? 36 : 42}
+              tickMargin={compactMode ? 2 : 4}
+            />
+          )}
           
           <Tooltip 
             contentStyle={{ backgroundColor: 'rgba(7,10,13,0.94)', borderColor: '#4a5a6b', color: '#e6edf3', fontFamily: 'JetBrains Mono', fontSize: '12px', borderRadius: '8px' }}
             itemStyle={{ padding: 0 }}
-            labelFormatter={(label) => typeof label === 'number' ? `${Math.floor(label / 60)}:${(label % 60).toString().padStart(2, '0')}` : label}
+            labelFormatter={(label) => typeof label === 'number' ? formatClock(label) : label}
+            formatter={tooltipValueFormatter}
+            cursor={{ stroke: '#5c6b7b', strokeDasharray: '3 3', strokeOpacity: 0.65 }}
           />
 
           {/* Background Reference Data (if loaded) */}
@@ -175,6 +281,8 @@ const RoastChart: React.FC<RoastChartProps> = ({ data, events, currentBT, curren
                     strokeWidth={1.5}
                     dot={false} 
                     strokeDasharray="6 4" 
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
                     yAxisId="left" 
                     name="参考 BT" 
                     isAnimationActive={false}
@@ -189,25 +297,31 @@ const RoastChart: React.FC<RoastChartProps> = ({ data, events, currentBT, curren
                       strokeWidth={1.5}
                       dot={false} 
                       strokeDasharray="2 5" 
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
                       yAxisId="left" 
                       name="参考 ET" 
                       isAnimationActive={false}
                   />
                 )}
-                <Line
-                    data={backgroundData}
-                    type="monotone"
-                    dataKey="ror"
-                    stroke="#ffe08a"
-                    strokeOpacity={0.45}
-                    strokeWidth={1}
-                    dot={false}
-                    strokeDasharray="4 4"
-                    yAxisId="right"
-                    name="参考 RoR"
-                    isAnimationActive={false}
-                    connectNulls
-                />
+                {displayBtRoR && (
+                  <Line
+                      data={backgroundData}
+                      type="monotone"
+                      dataKey="ror"
+                      stroke="#ffe08a"
+                      strokeOpacity={0.45}
+                      strokeWidth={1}
+                      dot={false}
+                      strokeDasharray="4 4"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      yAxisId="right"
+                      name="参考 RoR"
+                      isAnimationActive={false}
+                      connectNulls
+                  />
+                )}
              </>
           )}
 
@@ -218,6 +332,8 @@ const RoastChart: React.FC<RoastChartProps> = ({ data, events, currentBT, curren
             stroke="#ff6b6b" 
             strokeWidth={2} 
             dot={false} 
+            strokeLinecap="round"
+            strokeLinejoin="round"
             yAxisId="left" 
             name="Bean Temp" 
             isAnimationActive={false} 
@@ -230,26 +346,96 @@ const RoastChart: React.FC<RoastChartProps> = ({ data, events, currentBT, curren
                 stroke="#58a6ff" 
                 strokeWidth={2} 
                 dot={false} 
+                strokeLinecap="round"
+                strokeLinejoin="round"
                 yAxisId="left" 
                 name="Env Temp" 
                 isAnimationActive={false} 
             />
           )}
 
-          <Line 
-            type="monotone" 
-            dataKey="ror" 
-            stroke="#ffd84d" 
-            strokeWidth={1} 
-            dot={false} 
-            yAxisId="right" 
-            name="RoR" 
-            isAnimationActive={false} 
-            connectNulls
-          />
+          {displayBtRoR && (
+            <Line 
+              type="monotone" 
+              dataKey="ror" 
+              stroke="#ffd84d" 
+              strokeWidth={1.4} 
+              dot={false} 
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              yAxisId="right" 
+              name="BT RoR" 
+              isAnimationActive={false} 
+              connectNulls
+            />
+          )}
+
+          {displayEtRoR && (
+            <Line
+              type="monotone"
+              dataKey="et_ror"
+              stroke="#59d2ff"
+              strokeWidth={1.35}
+              dot={false}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              yAxisId="right"
+              name="ET RoR"
+              isAnimationActive={false}
+              connectNulls
+            />
+          )}
+
+          {/* Highlight latest sample to improve live readability */}
+          {latestLivePoint && (
+            <>
+              <ReferenceDot
+                x={latestLivePoint.time}
+                y={latestLivePoint.bt}
+                yAxisId="left"
+                r={2.8}
+                fill="#ff6b6b"
+                stroke="#0a1016"
+                strokeWidth={1}
+              />
+              {hasLiveET && (
+                <ReferenceDot
+                  x={latestLivePoint.time}
+                  y={latestLivePoint.et}
+                  yAxisId="left"
+                  r={2.8}
+                  fill="#58a6ff"
+                  stroke="#0a1016"
+                  strokeWidth={1}
+                />
+              )}
+              {displayBtRoR && (
+                <ReferenceDot
+                  x={latestLivePoint.time}
+                  y={latestLivePoint.ror}
+                  yAxisId="right"
+                  r={2.4}
+                  fill="#ffd84d"
+                  stroke="#0a1016"
+                  strokeWidth={1}
+                />
+              )}
+              {displayEtRoR && (
+                <ReferenceDot
+                  x={latestLivePoint.time}
+                  y={latestLivePoint.et_ror ?? 0}
+                  yAxisId="right"
+                  r={2.4}
+                  fill="#59d2ff"
+                  stroke="#0a1016"
+                  strokeWidth={1}
+                />
+              )}
+            </>
+          )}
 
           {/* RoR Anomalies (Flick/Crash) */}
-          {rorExtrema.map((point, i) => (
+          {displayBtRoR && rorExtrema.map((point, i) => (
              <ReferenceDot 
                 key={`ror-${i}`}
                 x={point.time}
@@ -268,14 +454,16 @@ const RoastChart: React.FC<RoastChartProps> = ({ data, events, currentBT, curren
                 x={event.time} 
                 stroke="#738295" 
                 yAxisId="left" 
+                strokeOpacity={0.75}
                 strokeDasharray="3 3"
-                label={{ 
-                    value: event.label, 
-                    position: 'insideTopLeft', 
-                    fill: '#8ea0b3', 
-                    fontSize: 10,
-                    className: 'font-mono'
-                }}
+                label={labeledEventIndexes.has(index) ? {
+                  value: event.label,
+                  position: 'insideTopLeft',
+                  fill: '#8ea0b3',
+                  fontSize: 10,
+                  offset: 8,
+                  className: 'font-mono'
+                } : undefined}
             />
           ))}
 

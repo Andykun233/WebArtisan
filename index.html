@@ -4,10 +4,65 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
     <meta name="description" content="WebArtisan Roaster - Professional Coffee Roasting Dashboard" />
+    <meta name="theme-color" content="#151b22" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="WebArtisan" />
+    <meta name="mobile-web-app-capable" content="yes" />
     <title>WebArtisan 烘焙大师</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="icon" type="image/svg+xml" href="/icons/icon.svg" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <style>
+      @font-face {
+        font-family: 'JetBrains Mono';
+        font-style: normal;
+        font-weight: 400;
+        font-display: swap;
+        src: url('/fonts/jetbrains-mono-400.ttf') format('truetype');
+      }
+      @font-face {
+        font-family: 'JetBrains Mono';
+        font-style: normal;
+        font-weight: 600;
+        font-display: swap;
+        src: url('/fonts/jetbrains-mono-600.ttf') format('truetype');
+      }
+      @font-face {
+        font-family: 'JetBrains Mono';
+        font-style: normal;
+        font-weight: 700;
+        font-display: swap;
+        src: url('/fonts/jetbrains-mono-700.ttf') format('truetype');
+      }
+      @font-face {
+        font-family: 'Space Grotesk';
+        font-style: normal;
+        font-weight: 400;
+        font-display: swap;
+        src: url('/fonts/space-grotesk-400.ttf') format('truetype');
+      }
+      @font-face {
+        font-family: 'Space Grotesk';
+        font-style: normal;
+        font-weight: 500;
+        font-display: swap;
+        src: url('/fonts/space-grotesk-500.ttf') format('truetype');
+      }
+      @font-face {
+        font-family: 'Space Grotesk';
+        font-style: normal;
+        font-weight: 600;
+        font-display: swap;
+        src: url('/fonts/space-grotesk-600.ttf') format('truetype');
+      }
+      @font-face {
+        font-family: 'Space Grotesk';
+        font-style: normal;
+        font-weight: 700;
+        font-display: swap;
+        src: url('/fonts/space-grotesk-700.ttf') format('truetype');
+      }
       :root {
         --bg-deep: #0f1318;
         --bg-mid: #151b22;
@@ -189,19 +244,6 @@
         margin-bottom: env(safe-area-inset-bottom);
       }
     </style>
-<script type="importmap">
-{
-  "imports": {
-    "recharts": "https://aistudiocdn.com/recharts@^3.5.1",
-    "vite": "https://aistudiocdn.com/vite@^7.2.7",
-    "lucide-react": "https://aistudiocdn.com/lucide-react@^0.556.0",
-    "@vitejs/plugin-react": "https://aistudiocdn.com/@vitejs/plugin-react@^5.1.2",
-    "react/": "https://aistudiocdn.com/react@^19.2.1/",
-    "react": "https://aistudiocdn.com/react@^19.2.1",
-    "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.1/"
-  }
-}
-</script>
 </head>
   <body>
     <div id="root"></div>

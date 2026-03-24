@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>离线模式 - WebArtisan</title>
+    <style>
+      :root {
+        color-scheme: dark;
+      }
+      html, body {
+        margin: 0;
+        width: 100%;
+        height: 100%;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Noto Sans CJK SC", "Microsoft YaHei", sans-serif;
+        background: radial-gradient(1000px 420px at 10% -10%, rgba(255, 138, 48, 0.22), transparent 65%),
+          radial-gradient(1000px 420px at 100% 0%, rgba(88, 166, 255, 0.18), transparent 70%),
+          linear-gradient(160deg, #151b22 0%, #0f1318 100%);
+        color: #e6edf3;
+      }
+      .wrap {
+        min-height: 100%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+      }
+      .card {
+        max-width: 420px;
+        width: 100%;
+        border: 1px solid #354250;
+        border-radius: 14px;
+        padding: 20px;
+        background: linear-gradient(180deg, rgba(31, 39, 48, 0.9), rgba(20, 25, 31, 0.92));
+        box-shadow: 0 14px 28px rgba(0, 0, 0, 0.35);
+      }
+      h1 {
+        margin: 0 0 8px 0;
+        font-size: 20px;
+      }
+      p {
+        margin: 0;
+        color: #9cadbf;
+        line-height: 1.6;
+        font-size: 14px;
+      }
+      button {
+        margin-top: 16px;
+        width: 100%;
+        border: 1px solid #5d6d7f;
+        border-radius: 10px;
+        background: linear-gradient(180deg, #0e6ad4, #0a57ad);
+        color: #fff;
+        font-size: 14px;
+        padding: 10px 14px;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="wrap">
+      <section class="card">
+        <h1>当前处于离线模式</h1>
+        <p>WebArtisan 会在网络恢复后自动同步最新资源。请确认 Wi-Fi 或蜂窝网络已连接。</p>
+        <button onclick="window.location.reload()">重新连接</button>
+      </section>
+    </main>
+  </body>
+</html>

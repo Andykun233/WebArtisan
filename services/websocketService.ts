@@ -8,6 +8,20 @@ export class WebSocketService {
   
   // Heartbeat to keep connection alive
   private pingInterval: number | null = null;
+  // Artisan-style polling request interval
+  private requestInterval: number | null = null;
+  private messageId = Math.floor(Date.now() % 100000);
+
+  private lastBt = 0;
+  private lastEt = 0;
+
+  // Align with Artisan WebSocket tab defaults shown in docs/examples.
+  private readonly commandNode = 'command';
+  private readonly messageIdNode = 'id';
+  private readonly machineIdNode = 'machine';
+  private readonly machineIdValue = 0;
+  private readonly dataRequestTag = 'getData';
+  private readonly requestIntervalMs = 1000;
 
   constructor() {}
 
@@ -51,7 +65,10 @@ export class WebSocketService {
 
             this.ws.onopen = () => {
                 console.log('WebSocket Connected');
+                this.lastBt = 0;
+                this.lastEt = 0;
                 this.startHeartbeat();
+                this.startDataRequests();
                 resolve(`WS: ${fullUrl}`);
             };
 
@@ -87,34 +104,58 @@ export class WebSocketService {
 
   private parseMessage(jsonStr: string) {
       try {
-          const data = JSON.parse(jsonStr);
-          
-          let bt = 0;
-          let et = 0;
+          const parsed = JSON.parse(jsonStr);
+          const payload = this.extractDataPayload(parsed);
 
-          // Artisan standard JSON structure:
-          // { "temp1": 150.0, "temp2": 200.0, ... }
-          // temp1 is typically ET (Env), temp2 is BT (Bean) in default Artisan setups.
-          
-          if (typeof data.temp2 === 'number') bt = data.temp2;
-          else if (typeof data.Bean === 'number') bt = data.Bean;
-          else if (typeof data.bt === 'number') bt = data.bt;
+          // Prefer BT/ET in nested data node (Artisan WebSocket examples),
+          // then fall back to commonly used direct keys.
+          const bt = this.pickNumeric(payload, ['BT', 'Bean', 'temp2', 'bt', 'bean']);
+          const et = this.pickNumeric(payload, ['ET', 'Environment', 'temp1', 'et', 'env']);
 
-          if (typeof data.temp1 === 'number') et = data.temp1;
-          else if (typeof data.Environment === 'number') et = data.Environment;
-          else if (typeof data.et === 'number') et = data.et;
+          if (bt !== null) this.lastBt = bt;
+          if (et !== null) this.lastEt = et;
 
-          // Filter out 0/0 packets if valid data exists elsewhere or valid packets are expected
-          // But allow 0 if it's the start.
-          
-          if (this.onDataCallback) {
-              this.onDataCallback(bt, et);
+          if ((bt !== null || et !== null) && this.onDataCallback) {
+              this.onDataCallback(this.lastBt, this.lastEt);
           }
 
       } catch (e) {
           // Not JSON, ignore or log
           // console.warn("WS Parse Error", e);
       }
+  }
+
+  private extractDataPayload(parsed: unknown): Record<string, unknown> {
+      if (!parsed || typeof parsed !== 'object') return {};
+      const obj = parsed as Record<string, unknown>;
+      const dataNode = obj.data;
+      if (dataNode && typeof dataNode === 'object' && !Array.isArray(dataNode)) {
+          return dataNode as Record<string, unknown>;
+      }
+      return obj;
+  }
+
+  private pickNumeric(source: Record<string, unknown>, keys: string[]): number | null {
+      for (const key of keys) {
+          const value = source[key];
+          if (typeof value === 'number' && Number.isFinite(value)) return value;
+          if (typeof value === 'string') {
+              const parsed = Number(value);
+              if (Number.isFinite(parsed)) return parsed;
+          }
+      }
+      return null;
+  }
+
+  private sendDataRequest() {
+      if (!this.ws || this.ws.readyState !== WebSocket.OPEN || !this.dataRequestTag) return;
+      this.messageId = (this.messageId + 1) % 100000;
+      const request = {
+          [this.commandNode]: this.dataRequestTag,
+          [this.messageIdNode]: this.messageId,
+          [this.machineIdNode]: this.machineIdValue
+      };
+      this.ws.send(JSON.stringify(request));
   }
 
   private startHeartbeat() {
@@ -129,6 +170,15 @@ export class WebSocketService {
       }, 30000) as any;
   }
 
+  private startDataRequests() {
+      if (this.requestInterval) clearInterval(this.requestInterval);
+      // Match Artisan behavior: send one request every sampling interval (1s default in this app).
+      this.sendDataRequest();
+      this.requestInterval = setInterval(() => {
+          this.sendDataRequest();
+      }, this.requestIntervalMs) as any;
+  }
+
   disconnect() {
       this.cleanup();
       if (this.ws) {
@@ -139,5 +189,8 @@ export class WebSocketService {
 
   private cleanup() {
       if (this.pingInterval) clearInterval(this.pingInterval);
+      if (this.requestInterval) clearInterval(this.requestInterval);
+      this.pingInterval = null;
+      this.requestInterval = null;
   }
 }

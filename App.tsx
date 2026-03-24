@@ -1,15 +1,11 @@
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Play, Square, Bluetooth, Thermometer, AlertCircle, Terminal, RotateCcw, Loader2, Signal, Undo2, X, Download, FileInput, Usb, Bug, Wifi } from 'lucide-react';
+import { Play, Square, Thermometer, AlertCircle, Terminal, RotateCcw, Loader2, Signal, Undo2, X, Download, FileInput, Bug, Wifi, Settings, Trash2 } from 'lucide-react';
 import RoastChart from './components/RoastChart';
 import StatCard from './components/StatCard';
-import { TC4BluetoothService } from './services/bluetoothService';
-import { TC4SerialService } from './services/serialService';
 import { WebSocketService } from './services/websocketService';
 import { DataPoint, RoastStatus, RoastEvent } from './types';
 
-const bluetoothService = new TC4BluetoothService();
-const serialService = new TC4SerialService();
 const websocketService = new WebSocketService();
 
 const ROR_CONFIG = {
@@ -482,6 +478,337 @@ const parseRoastLog = (content: string, fileName: string): { data: DataPoint[], 
 }
 
 
+type ExportFormat = 'alog' | 'csv' | 'json';
+
+const EXPORT_FORMAT_OPTIONS: { value: ExportFormat; label: string }[] = [
+  { value: 'alog', label: 'ALOG (.alog)' },
+  { value: 'csv', label: 'CSV (.csv)' },
+  { value: 'json', label: 'JSON (.json)' }
+];
+
+const EXPORT_EVENT_CODE_MAP: Record<string, number> = {
+  '预热': 0,
+  '入豆': 1,
+  '回温点': 2,
+  '脱水结束': 3,
+  '一爆开始': 4,
+  '一爆结束': 5,
+  '二爆开始': 6,
+  '二爆结束': 7,
+  '下豆': 8
+};
+
+const EXPORT_EVENT_TOKEN_MAP: Record<string, string> = {
+  '预热': 'P',
+  '入豆': 'C',
+  '回温点': 'TP',
+  '脱水结束': 'DE',
+  '一爆开始': 'FCs',
+  '一爆结束': 'FCe',
+  '二爆开始': 'SCs',
+  '二爆结束': 'SCe',
+  '下豆': 'D'
+};
+
+function normalizeExportBaseName(fileName: string): string {
+  return fileName.replace(/\.(alog|csv|json)$/i, '').trim();
+}
+
+function toRoundedNumber(value: number, digits: number): number {
+  if (!Number.isFinite(value)) return 0;
+  const factor = Math.pow(10, digits);
+  return Math.round(value * factor) / factor;
+}
+
+function formatNumeric(value: number, digits: number): string {
+  if (!Number.isFinite(value)) return '';
+  return toRoundedNumber(value, digits).toString();
+}
+
+function estimateSampleInterval(points: DataPoint[]): number {
+  const deltas: number[] = [];
+  for (let i = 1; i < points.length; i++) {
+    const dt = points[i].time - points[i - 1].time;
+    if (Number.isFinite(dt) && dt > 0 && dt <= 30) {
+      deltas.push(dt);
+    }
+  }
+
+  if (deltas.length === 0) return 1.0;
+  deltas.sort((a, b) => a - b);
+  const mid = Math.floor(deltas.length / 2);
+  const median = deltas.length % 2 === 0 ? (deltas[mid - 1] + deltas[mid]) / 2 : deltas[mid];
+  return toRoundedNumber(median, 3);
+}
+
+function findNearestPoint(points: DataPoint[], time: number): DataPoint | null {
+  if (points.length === 0) return null;
+  return points.reduce((prev, curr) =>
+    Math.abs(curr.time - time) < Math.abs(prev.time - time) ? curr : prev
+  );
+}
+
+function mapEventsToNearestIndexes(points: DataPoint[], roastEvents: RoastEvent[]): Map<number, RoastEvent[]> {
+  const result = new Map<number, RoastEvent[]>();
+  if (points.length === 0 || roastEvents.length === 0) return result;
+
+  roastEvents.forEach((event) => {
+    let nearestIdx = 0;
+    let nearestDelta = Math.abs(points[0].time - event.time);
+    for (let i = 1; i < points.length; i++) {
+      const delta = Math.abs(points[i].time - event.time);
+      if (delta < nearestDelta) {
+        nearestDelta = delta;
+        nearestIdx = i;
+      }
+    }
+    const bucket = result.get(nearestIdx) || [];
+    bucket.push(event);
+    result.set(nearestIdx, bucket);
+  });
+
+  return result;
+}
+
+function toPythonLiteral(value: any): string {
+  if (value === null || value === undefined) return 'None';
+  if (typeof value === 'boolean') return value ? 'True' : 'False';
+  if (typeof value === 'number') return Number.isFinite(value) ? `${value}` : 'None';
+  if (typeof value === 'string') {
+    const escaped = value.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+    return `'${escaped}'`;
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => toPythonLiteral(item)).join(', ')}]`;
+  }
+  if (typeof value === 'object') {
+    const entries = Object.entries(value).map(([k, v]) => `${toPythonLiteral(k)}: ${toPythonLiteral(v)}`);
+    return `{${entries.join(', ')}}`;
+  }
+  return 'None';
+}
+
+function buildComputedSummary(points: DataPoint[], roastEvents: RoastEvent[]) {
+  const byLabel = (label: string) => roastEvents.find((event) => event.label === label);
+  const charge = byLabel('入豆');
+  const tp = byLabel('回温点');
+  const dry = byLabel('脱水结束');
+  const fcs = byLabel('一爆开始');
+  const fce = byLabel('一爆结束');
+  const scs = byLabel('二爆开始');
+  const sce = byLabel('二爆结束');
+  const drop = byLabel('下豆');
+  const total = points.length > 0 ? points[points.length - 1].time : 0;
+
+  const nearestTemp = (event?: RoastEvent) => {
+    if (!event) return { bt: 0, et: 0 };
+    const closest = findNearestPoint(points, event.time);
+    return {
+      bt: toRoundedNumber(closest?.bt ?? event.temp ?? 0, 1),
+      et: toRoundedNumber(closest?.et ?? 0, 1)
+    };
+  };
+
+  const chargeTemp = nearestTemp(charge);
+  const tpTemp = nearestTemp(tp);
+  const dryTemp = nearestTemp(dry);
+  const fcsTemp = nearestTemp(fcs);
+  const fceTemp = nearestTemp(fce);
+  const scsTemp = nearestTemp(scs);
+  const sceTemp = nearestTemp(sce);
+  const dropTemp = nearestTemp(drop);
+
+  return {
+    CHARGE_ET: chargeTemp.et,
+    CHARGE_BT: chargeTemp.bt,
+    TP_time: toRoundedNumber(tp?.time ?? 0, 3),
+    TP_ET: tpTemp.et,
+    TP_BT: tpTemp.bt,
+    DRY_time: toRoundedNumber(dry?.time ?? 0, 3),
+    DRY_ET: dryTemp.et,
+    DRY_BT: dryTemp.bt,
+    FCs_time: toRoundedNumber(fcs?.time ?? 0, 3),
+    FCs_ET: fcsTemp.et,
+    FCs_BT: fcsTemp.bt,
+    FCe_time: toRoundedNumber(fce?.time ?? 0, 3),
+    FCe_ET: fceTemp.et,
+    FCe_BT: fceTemp.bt,
+    SCs_time: toRoundedNumber(scs?.time ?? 0, 3),
+    SCs_ET: scsTemp.et,
+    SCs_BT: scsTemp.bt,
+    SCe_time: toRoundedNumber(sce?.time ?? 0, 3),
+    SCe_ET: sceTemp.et,
+    SCe_BT: sceTemp.bt,
+    DROP_time: toRoundedNumber(drop?.time ?? 0, 3),
+    DROP_ET: dropTemp.et,
+    DROP_BT: dropTemp.bt,
+    totaltime: toRoundedNumber(total, 3)
+  };
+}
+
+function buildCsvExportContent(points: DataPoint[], roastEvents: RoastEvent[], sampleInterval: number): string {
+  const eventMap = mapEventsToNearestIndexes(points, roastEvents);
+  const metadataLine = JSON.stringify({
+    temperatureUnit: 'C',
+    sampleInterval,
+    curveConfig: {
+      hasFan: true,
+      hasDrum: true,
+      hasEt: true,
+      hasInletTemp: false,
+      powerRange: [0.0, 100.0],
+      fanRange: [0.0, 100.0],
+      drumRange: [0.0, 100.0],
+      powerUnit: 1,
+      fanSpeedUnit: 0,
+      drumSpeedUnit: 0
+    }
+  });
+
+  const header = 'time_seconds,bean_temp,env_temp,ror,event,power,fan,drum_speed';
+  const rows = points.map((point, index) => {
+    const eventsAtPoint = eventMap.get(index) || [];
+    const eventToken = eventsAtPoint
+      .map((event) => EXPORT_EVENT_TOKEN_MAP[event.label] || event.label)
+      .join('|');
+
+    return [
+      formatNumeric(point.time, 3),
+      formatNumeric(point.bt, 1),
+      formatNumeric(point.et, 1),
+      formatNumeric(point.ror, 1),
+      eventToken,
+      '',
+      '',
+      ''
+    ].join(',');
+  });
+
+  return [metadataLine, header, ...rows].join('\n');
+}
+
+function buildJsonExportPayload(
+  points: DataPoint[],
+  roastEvents: RoastEvent[],
+  fileBaseName: string,
+  now: Date,
+  sampleInterval: number
+) {
+  const eventMap = mapEventsToNearestIndexes(points, roastEvents);
+  const sortedEvents = [...roastEvents].sort((a, b) => a.time - b.time);
+  const duration = points.length > 0 ? points[points.length - 1].time : 0;
+  const roastId =
+    typeof crypto !== 'undefined' && 'randomUUID' in crypto
+      ? crypto.randomUUID()
+      : `wa-${Date.now()}-${Math.random().toString(16).slice(2, 10)}`;
+
+  const dataList = points.map((point, index) => {
+    const rowEvent = (eventMap.get(index) || [])[0];
+    const payload: any = {
+      duration: toRoundedNumber(point.time, 3),
+      bt: toRoundedNumber(point.bt, 1),
+      et: toRoundedNumber(point.et, 1),
+      ror: toRoundedNumber(point.ror, 1),
+      rorTempUnit: 'C',
+      rorPeriodSeconds: 60,
+      roasterParams: [
+        { key: 'HP', value: 0 },
+        { key: 'FC', value: 0 },
+        { key: 'TS', value: 0 },
+        { key: 'RC', value: 0 }
+      ]
+    };
+
+    const eventCode = rowEvent ? EXPORT_EVENT_CODE_MAP[rowEvent.label] : undefined;
+    if (eventCode !== undefined) payload.event = eventCode;
+    return payload;
+  });
+
+  const eventList = sortedEvents.map((event) => {
+    const nearest = findNearestPoint(points, event.time);
+    const eventCode = EXPORT_EVENT_CODE_MAP[event.label];
+    const payload: any = {
+      temperature: toRoundedNumber(nearest?.bt ?? event.temp ?? 0, 1),
+      temperatureUnit: 'C',
+      time: toRoundedNumber(event.time, 3)
+    };
+    if (eventCode !== undefined) payload.event = eventCode;
+    return payload;
+  });
+
+  const dry = sortedEvents.find((e) => e.label === '脱水结束');
+  const fcs = sortedEvents.find((e) => e.label === '一爆开始');
+  const drop = sortedEvents.find((e) => e.label === '下豆');
+  const phaseList: { phase: number; percentage: number; duration: number }[] = [];
+  if (drop && drop.time > 0) {
+    if (dry && dry.time > 0 && dry.time <= drop.time) {
+      phaseList.push({
+        phase: 2,
+        percentage: toRoundedNumber(dry.time / drop.time, 6),
+        duration: toRoundedNumber(dry.time, 3)
+      });
+    }
+    if (dry && fcs && fcs.time >= dry.time && fcs.time <= drop.time) {
+      phaseList.push({
+        phase: 3,
+        percentage: toRoundedNumber((fcs.time - dry.time) / drop.time, 6),
+        duration: toRoundedNumber(fcs.time - dry.time, 3)
+      });
+    }
+    if (fcs && fcs.time <= drop.time) {
+      phaseList.push({
+        phase: 4,
+        percentage: toRoundedNumber((drop.time - fcs.time) / drop.time, 6),
+        duration: toRoundedNumber(drop.time - fcs.time, 3)
+      });
+    }
+  }
+
+  return {
+    id: roastId,
+    name: fileBaseName,
+    favorite: false,
+    version: '1.0.1',
+    sampleInterval,
+    temperatureUnit: 'C',
+    dateTime: now.toISOString().replace('Z', ''),
+    duration: toRoundedNumber(duration, 3),
+    dataList,
+    eventList,
+    phaseList,
+    notes: '',
+    channels: {}
+  };
+}
+
+function buildAlogExportContent(
+  points: DataPoint[],
+  roastEvents: RoastEvent[],
+  fileBaseName: string,
+  now: Date,
+  sampleInterval: number
+): string {
+  const computed = buildComputedSummary(points, roastEvents);
+  const payload = {
+    recording_version: '3.2.0',
+    version: '3.2.0',
+    mode: 'C',
+    viewerMode: false,
+    locale: 'zh_CN',
+    title: fileBaseName,
+    roastisodate: now.toISOString().slice(0, 10),
+    roasttime: now.toTimeString().slice(0, 8),
+    roastepoch: Math.floor(now.getTime() / 1000),
+    samplinginterval: sampleInterval,
+    timex: points.map((point) => toRoundedNumber(point.time, 3)),
+    temp1: points.map((point) => toRoundedNumber(point.et, 1)),
+    temp2: points.map((point) => toRoundedNumber(point.bt, 1)),
+    computed
+  };
+
+  return toPythonLiteral(payload);
+}
+
 const App: React.FC = () => {
   const [status, setStatus] = useState<RoastStatus>(RoastStatus.IDLE);
   const [data, setData] = useState<DataPoint[]>([]);
@@ -510,6 +837,7 @@ const App: React.FC = () => {
   // Refs for stable access inside intervals without triggering re-renders. Initialized to 0.
   const btRef = useRef(0);
   const etRef = useRef(0);
+  const swapBtEtRef = useRef(false);
   const dataRef = useRef<DataPoint[]>([]);
   const recentBtHistoryRef = useRef<TimeValuePoint[]>([]);
   const recentEtHistoryRef = useRef<TimeValuePoint[]>([]);
@@ -519,7 +847,7 @@ const App: React.FC = () => {
 
   // Connection State
   const [isConnecting, setIsConnecting] = useState(false);
-  const [activeService, setActiveService] = useState<'bluetooth' | 'serial' | 'websocket' | 'simulation' | null>(null);
+  const [activeService, setActiveService] = useState<'websocket' | 'simulation' | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [deviceName, setDeviceName] = useState<string | null>(null);
@@ -538,18 +866,50 @@ const App: React.FC = () => {
   // Export Modal State
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
   const [exportFileName, setExportFileName] = useState("");
+  const [exportFormat, setExportFormat] = useState<ExportFormat>('csv');
+  const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
+  const [samplingIntervalSeconds, setSamplingIntervalSeconds] = useState<number>(3);
+  const [swapBtEt, setSwapBtEt] = useState(false);
+  const [showBtRoR, setShowBtRoR] = useState(true);
+  const [showEtRoR, setShowEtRoR] = useState(true);
   
   // Mobile Event Panel State
   const [isMobileEventsExpanded, setIsMobileEventsExpanded] = useState(false);
+  const [isCompactLandscape, setIsCompactLandscape] = useState(false);
+
+  useEffect(() => {
+    const updateCompactLandscape = () => {
+      const vw = window.innerWidth;
+      const vh = window.innerHeight;
+      const isLandscape = vw > vh;
+      const isTouchLike = window.matchMedia('(pointer: coarse)').matches || vw <= 1024;
+      setIsCompactLandscape(isTouchLike && isLandscape && vh <= 560);
+    };
+
+    updateCompactLandscape();
+    window.addEventListener('resize', updateCompactLandscape);
+    window.addEventListener('orientationchange', updateCompactLandscape);
+
+    return () => {
+      window.removeEventListener('resize', updateCompactLandscape);
+      window.removeEventListener('orientationchange', updateCompactLandscape);
+    };
+  }, []);
+
+  useEffect(() => {
+    swapBtEtRef.current = swapBtEt;
+  }, [swapBtEt]);
 
   const handleDataUpdate = useCallback((bt: number, et: number) => {
+    const mappedBT = swapBtEtRef.current ? et : bt;
+    const mappedET = swapBtEtRef.current ? bt : et;
     // Update Refs for logic
-    btRef.current = bt;
-    etRef.current = et;
+    btRef.current = mappedBT;
+    etRef.current = mappedET;
     lastSensorUpdateRef.current = Date.now();
     // Update State for UI
-    setCurrentBT(bt);
-    setCurrentET(et);
+    setCurrentBT(mappedBT);
+    setCurrentET(mappedET);
     setHasReceivedFirstData(true);
   }, []);
 
@@ -584,83 +944,62 @@ const App: React.FC = () => {
      lastSensorUpdateRef.current = 0;
   }, []);
 
+  const handleSwapBtEtChange = (enabled: boolean) => {
+    setSwapBtEt(enabled);
+    swapBtEtRef.current = enabled;
+
+    // Swap currently displayed values immediately so UI reflects setting change at once.
+    const prevBT = btRef.current;
+    const prevET = etRef.current;
+    btRef.current = prevET;
+    etRef.current = prevBT;
+    setCurrentBT(prevET);
+    setCurrentET(prevBT);
+
+    // Reset RoR windows to avoid a temporary spike caused by channel remap.
+    recentBtHistoryRef.current = [];
+    recentEtHistoryRef.current = [];
+    smoothedRoRRef.current = { bt: 0, et: 0 };
+  };
+
   // Handlers
-  const handleBluetoothConnect = async () => {
-    setIsConnecting(true);
-    setRawLogs([]);
-    rawLogsRef.current = [];
-    
-    try {
-      setErrorMsg(null);
-      // Now passing handleRawData to service
-      const name = await bluetoothService.connect(handleDataUpdate, handleDisconnect, handleRawData);
-      setDeviceName(name);
-      setActiveService('bluetooth');
-      setStatus(RoastStatus.CONNECTED);
-    } catch (err: any) {
-      setErrorMsg(err.message || "蓝牙连接失败。请检查设备电源和配对状态。");
-      console.error(err);
-    } finally {
-      setIsConnecting(false);
-    }
-  };
-
-  const handleSerialConnect = async () => {
-      setIsConnecting(true);
-      setRawLogs([]);
-      rawLogsRef.current = [];
-      
-      // Prompt for Baud Rate
-      let baudRate = 115200;
-      const input = window.prompt("请输入波特率 (Baud Rate)\n默认: 115200 (TC4/Artisan)\nHC-05/06: 9600 \n其他: 57600, 38400", "115200");
-      
-      if (input === null) {
-          setIsConnecting(false);
-          return;
-      }
-      
-      const parsed = parseInt(input.trim(), 10);
-      if (!isNaN(parsed) && parsed > 0) {
-          baudRate = parsed;
-      } else {
-          setErrorMsg("无效的波特率");
-          setIsConnecting(false);
-          return;
-      }
-
-      try {
-        setErrorMsg(null);
-        // Now passing handleRawData to service
-        const name = await serialService.connect(handleDataUpdate, handleDisconnect, baudRate, handleRawData);
-        setDeviceName(name);
-        setActiveService('serial');
-        setStatus(RoastStatus.CONNECTED); 
-      } catch (err: any) {
-        setErrorMsg(err.message || "串口连接失败。");
-        console.error(err);
-      } finally {
-        setIsConnecting(false);
-      }
-  };
-
   const handleWebSocketConnect = async () => {
     setIsConnecting(true);
     setRawLogs([]);
     rawLogsRef.current = [];
 
-    const isHttpsPage = window.location.protocol === 'https:';
-    const defaultUrl = isHttpsPage ? "wss://localhost:80" : "localhost:80";
-    const promptText = isHttpsPage
-      ? "请输入 WebSocket 地址（HTTPS 页面请使用 wss://）\nArtisan 默认端口: 80"
-      : "请输入 WebSocket 地址\nArtisan 默认端口: 80";
-    const input = window.prompt(promptText, defaultUrl);
+    const defaultIp = "请输入Roast32的IP地址";
+    const input = window.prompt(
+      "请输入设备 IP 地址（仅 IP）\n连接地址将固定为: ws://<IP>:80/ws",
+      defaultIp
+    );
 
     if (input === null) {
         setIsConnecting(false);
         return;
     }
 
-    const url = input.trim();
+    const raw = input.trim();
+    if (!raw) {
+        setErrorMsg("请输入设备 IP 地址");
+        setIsConnecting(false);
+        return;
+    }
+
+    // Allow pasting ws://... and normalize to fixed ws://<host>:80/ws
+    const normalizedHost = raw
+      .replace(/^wss?:\/\//i, '')
+      .split('/')[0]
+      .split(':')[0]
+      .trim();
+
+    if (!normalizedHost) {
+        setErrorMsg("无效的设备 IP 地址");
+        setIsConnecting(false);
+        return;
+    }
+
+    const url = `ws://${normalizedHost}:80/ws`;
 
     try {
         setErrorMsg(null);
@@ -769,8 +1108,6 @@ const App: React.FC = () => {
   // Close connections on unmount (cleanup)
   useEffect(() => {
       return () => {
-          bluetoothService.disconnect();
-          serialService.disconnect();
           websocketService.disconnect();
       }
   }, []);
@@ -804,7 +1141,7 @@ const App: React.FC = () => {
     }
   };
 
-  // --- Export Logic (CSV) ---
+  // --- Export Logic ---
   const handleOpenExportModal = () => {
       if (data.length === 0) {
           setErrorMsg("没有数据可导出");
@@ -820,87 +1157,62 @@ const App: React.FC = () => {
 
   const handleConfirmExport = (e?: React.FormEvent) => {
       if (e) e.preventDefault();
+      if (data.length === 0) {
+          setErrorMsg("没有数据可导出");
+          setTimeout(() => setErrorMsg(null), 3000);
+          return;
+      }
+
       setIsExportModalOpen(false);
 
       const now = new Date();
-      const dateStr = now.toLocaleDateString('en-GB').replace(/\//g, '.'); // dd.mm.yyyy format
+      const sampleInterval = estimateSampleInterval(data);
+      const fallbackBaseName = `roast_${now.toISOString().slice(0,10).replace(/-/g,'')}`;
+      const baseName = normalizeExportBaseName(exportFileName.trim()) || fallbackBaseName;
 
-      // 1. Build Header Metadata
-      // Artisan CSV often has header like: Date:.. Unit:C CHARGE:.. TP:..
-      let headerLine = `Date:${dateStr}\tUnit:C`;
-      
-      const labelMap: {[key:string]: string} = { 
-          '入豆': 'CHARGE', '脱水结束': 'DRYe', 
-          '一爆开始': 'FCs', '一爆结束': 'FCe', 
-          '二爆开始': 'SCs', '二爆结束': 'SCe', 
-          '下豆': 'DROP', '回温点': 'TP'
-      };
+      let fileContent = '';
+      let mimeType = 'text/plain;charset=utf-8;';
 
-      // Find Charge Time for Time2 calculation
-      const chargeEvent = events.find(e => e.label === '入豆');
-      const chargeTime = chargeEvent ? chargeEvent.time : 0;
+      if (exportFormat === 'csv') {
+          fileContent = buildCsvExportContent(data, events, sampleInterval);
+          mimeType = 'text/csv;charset=utf-8;';
+      } else if (exportFormat === 'json') {
+          const payload = buildJsonExportPayload(data, events, baseName, now, sampleInterval);
+          fileContent = JSON.stringify(payload, null, 2);
+          mimeType = 'application/json;charset=utf-8;';
+      } else {
+          fileContent = buildAlogExportContent(data, events, baseName, now, sampleInterval);
+          mimeType = 'text/plain;charset=utf-8;';
+      }
 
-      // Add events to header
-      events.forEach(e => {
-          const key = labelMap[e.label];
-          if (key) {
-              headerLine += `\t${key}:${formatTime(e.time * 1000)}`;
-          }
-      });
-      // Add Total Duration
-      headerLine += `\tTime:${getDuration()}\n`;
-
-      // 2. Column Headers
-      // Artisan uses Time1 (total), Time2 (since charge), ET, BT, Event
-      const columns = `Time1\tTime2\tET\tBT\tEvent\n`;
-
-      // 3. Build Rows
-      let rows = '';
-      data.forEach(d => {
-          const time1Str = formatTime(d.time * 1000);
-          
-          let time2Str = '';
-          if (chargeEvent && d.time >= chargeTime) {
-              time2Str = formatTime((d.time - chargeTime) * 1000);
-          } else {
-              time2Str = ''; // Or keep empty
-          }
-
-          // Check for event at this timestamp (fuzzy match < 0.5s)
-          const matchingEvent = events.find(e => Math.abs(e.time - d.time) < 0.5);
-          const eventLabel = matchingEvent 
-              ? (labelMap[matchingEvent.label] || matchingEvent.label) 
-              : '';
-
-          // Format values (Artisan typically allows dots for decimals in CSV if tab separated)
-          const etVal = d.et.toFixed(2);
-          const btVal = d.bt.toFixed(2);
-
-          rows += `${time1Str}\t${time2Str}\t${etVal}\t${btVal}\t${eventLabel}\n`;
-      });
-
-      const csvContent = headerLine + columns + rows;
-
-      // 4. Trigger Download
-      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      const contentWithBom = exportFormat === 'csv' ? `\uFEFF${fileContent}` : fileContent;
+      const blob = new Blob([contentWithBom], { type: mimeType });
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
       
-      const finalName = exportFileName.trim() || `roast_${now.toISOString().slice(0,10).replace(/-/g,'')}`;
-      link.setAttribute('download', `${finalName}.csv`);
+      const finalName = `${baseName}.${exportFormat}`;
+      link.setAttribute('download', finalName);
       
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
       
-      setSuccessMsg("导出成功");
+      setSuccessMsg(`导出成功：${finalName}`);
       setTimeout(() => setSuccessMsg(null), 3000);
   };
 
   // --- Import Logic ---
   const handleBackgroundClick = () => {
       if (backgroundInputRef.current) backgroundInputRef.current.click();
+  };
+
+  const handleClearBackground = () => {
+      setBackgroundData([]);
+      setBackgroundEvents([]);
+      if (backgroundInputRef.current) backgroundInputRef.current.value = "";
+      setSuccessMsg("已清除背景曲线");
+      setTimeout(() => setSuccessMsg(null), 3000);
   };
 
   const handleBackgroundFile = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -972,7 +1284,8 @@ const App: React.FC = () => {
       // Prevent stale points from distorting RoR if sensor stream pauses.
       if (!isSimulating && hasReceivedFirstData && lastSensorUpdateRef.current > 0) {
         const staleMs = now - lastSensorUpdateRef.current;
-        if (staleMs > 4000) {
+        const staleThresholdMs = Math.max(4000, samplingIntervalSeconds * 3000);
+        if (staleMs > staleThresholdMs) {
           return;
         }
       }
@@ -1024,10 +1337,10 @@ const App: React.FC = () => {
       // Update State (triggers chart re-render)
       setData(dataRef.current);
 
-    }, 1000);
+    }, samplingIntervalSeconds * 1000);
 
     return () => clearInterval(interval);
-  }, [status, startTime, hasReceivedFirstData, isSimulating]);
+  }, [status, startTime, hasReceivedFirstData, isSimulating, samplingIntervalSeconds]);
 
   // Simulation Logic
   const toggleSimulation = () => {
@@ -1046,11 +1359,7 @@ const App: React.FC = () => {
         // Init physics vars
         let simBt = 150;
         let simEt = 200;
-        btRef.current = simBt;
-        etRef.current = simEt;
-        lastSensorUpdateRef.current = Date.now();
-        setCurrentBT(simBt);
-        setCurrentET(simEt);
+        handleDataUpdate(simBt, simEt);
         
         simulationIntervalRef.current = window.setInterval(() => {
             // Physics simulation
@@ -1059,15 +1368,11 @@ const App: React.FC = () => {
             const delta = simEt - simBt;
             simBt += delta * 0.02; // Thermal mass
 
-            // Update Refs
-            btRef.current = parseFloat(simBt.toFixed(1));
-            etRef.current = parseFloat(simEt.toFixed(1));
-            lastSensorUpdateRef.current = Date.now();
-
-            // Update UI
-            setCurrentBT(btRef.current);
-            setCurrentET(etRef.current);
-        }, 1000);
+            handleDataUpdate(
+              parseFloat(simBt.toFixed(1)),
+              parseFloat(simEt.toFixed(1))
+            );
+        }, samplingIntervalSeconds * 1000);
     }
   };
 
@@ -1084,6 +1389,12 @@ const App: React.FC = () => {
      if (data.length > 0 && status === RoastStatus.FINISHED) return formatTime(data[data.length-1].time * 1000);
      return "00:00";
   }
+
+  const getElapsedSeconds = () => {
+    if (status === RoastStatus.ROASTING && startTime) return Math.max(0, (Date.now() - startTime) / 1000);
+    if (data.length > 0) return data[data.length - 1].time;
+    return 0;
+  };
 
   // Helper to check if event exists
   const hasEvent = (label: string) => events.some(e => e.label === label);
@@ -1145,6 +1456,29 @@ const App: React.FC = () => {
   const orderedEventLabels = ["入豆", "脱水结束", "一爆开始", "一爆结束", "二爆开始", "二爆结束"];
   const nextEventHint = orderedEventLabels.find(label => !hasEvent(label)) || "流程完成";
   const isDeviceConnected = activeService !== null;
+  const hasBackgroundCurve = backgroundData.length > 0 || backgroundEvents.length > 0;
+  const elapsedRoastSeconds = getElapsedSeconds();
+  const firstCrackStartEvent = events.find((event) => event.label === "一爆开始");
+  const showDevelopmentRatio = !!firstCrackStartEvent && elapsedRoastSeconds >= firstCrackStartEvent.time;
+  const developmentRatio = showDevelopmentRatio
+    ? Math.min(100, Math.max(0, ((elapsedRoastSeconds - firstCrackStartEvent!.time) / Math.max(elapsedRoastSeconds, 1e-6)) * 100))
+    : 0;
+  const showEtRoRSeries = showEtRoR && hasLiveET;
+  const hasAnyRoRDisplay = showBtRoR || showEtRoRSeries;
+  const mobileTickerColumnCount =
+    2 +
+    (hasLiveET ? 1 : 0) +
+    (showBtRoR ? 1 : 0) +
+    (showEtRoRSeries ? 1 : 0) +
+    (showDevelopmentRatio ? 1 : 0);
+  const mobileTickerGridClass =
+    mobileTickerColumnCount <= 2
+      ? 'grid-cols-2'
+      : mobileTickerColumnCount === 3
+        ? 'grid-cols-3'
+        : mobileTickerColumnCount === 4
+          ? 'grid-cols-4'
+          : 'grid-cols-5';
 
   // Logic for status color
   const getStatusColor = () => {
@@ -1160,8 +1494,6 @@ const App: React.FC = () => {
   };
 
   const getModeText = () => {
-      if (activeService === 'bluetooth') return 'Bluetooth LE';
-      if (activeService === 'serial') return 'Serial/SPP';
       if (activeService === 'websocket') return 'WebSocket';
       if (activeService === 'simulation') return 'Simulation';
       return '未知';
@@ -1203,9 +1535,23 @@ const App: React.FC = () => {
                                 autoFocus
                             />
                             <div className="bg-[#28313d] border border-l-0 border-[#3e4b5a] text-gray-400 px-3 py-2 text-sm rounded-r">
-                                .csv
+                                .{exportFormat}
                             </div>
                         </div>
+                    </div>
+                    <div>
+                        <label className="block text-xs font-bold text-gray-500 uppercase mb-1">导出格式</label>
+                        <select
+                            value={exportFormat}
+                            onChange={(e) => setExportFormat(e.target.value as ExportFormat)}
+                            className="w-full bg-[#111823] border border-[#3e4b5a] text-white px-3 py-2 text-sm rounded focus:outline-none focus:border-blue-500"
+                        >
+                            {EXPORT_FORMAT_OPTIONS.map((option) => (
+                                <option key={option.value} value={option.value}>
+                                    {option.label}
+                                </option>
+                            ))}
+                        </select>
                     </div>
                     <div className="flex justify-end gap-2">
                         <button 
@@ -1227,9 +1573,81 @@ const App: React.FC = () => {
         </div>
       )}
 
+      {/* SETTINGS MODAL */}
+      {isSettingsModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+          <div className="panel-surface border rounded-lg shadow-2xl w-full max-w-sm overflow-hidden">
+            <div className="px-4 py-3 border-b border-[#2f3944] flex justify-between items-center bg-[#252f3a]/80">
+              <span className="font-bold text-gray-200 flex items-center gap-2">
+                <Settings size={16} /> 设置
+              </span>
+              <button onClick={() => setIsSettingsModalOpen(false)} className="text-gray-500 hover:text-gray-300">
+                <X size={18} />
+              </button>
+            </div>
+            <div className="p-4 flex flex-col gap-4">
+              <div>
+                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">采样时间</label>
+                <select
+                  value={samplingIntervalSeconds}
+                  onChange={(e) => setSamplingIntervalSeconds(Number(e.target.value))}
+                  className="w-full bg-[#111823] border border-[#3e4b5a] text-white px-3 py-2 text-sm rounded focus:outline-none focus:border-blue-500"
+                >
+                  {[1, 2, 3, 4, 5].map((sec) => (
+                    <option key={sec} value={sec}>
+                      {sec} 秒
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <label className="flex items-center justify-between rounded border border-[#31404f] bg-[#111823]/75 px-3 py-2 text-sm text-gray-200">
+                <span>BT / ET 温度互换</span>
+                <input
+                  type="checkbox"
+                  checked={swapBtEt}
+                  onChange={(e) => handleSwapBtEtChange(e.target.checked)}
+                  className="h-4 w-4 accent-blue-500"
+                />
+              </label>
+
+              <label className="flex items-center justify-between rounded border border-[#31404f] bg-[#111823]/75 px-3 py-2 text-sm text-gray-200">
+                <span>显示 BT RoR</span>
+                <input
+                  type="checkbox"
+                  checked={showBtRoR}
+                  onChange={(e) => setShowBtRoR(e.target.checked)}
+                  className="h-4 w-4 accent-blue-500"
+                />
+              </label>
+
+              <label className="flex items-center justify-between rounded border border-[#31404f] bg-[#111823]/75 px-3 py-2 text-sm text-gray-200">
+                <span>显示 ET RoR</span>
+                <input
+                  type="checkbox"
+                  checked={showEtRoR}
+                  onChange={(e) => setShowEtRoR(e.target.checked)}
+                  className="h-4 w-4 accent-blue-500"
+                />
+              </label>
+
+              <div className="flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => setIsSettingsModalOpen(false)}
+                  className="toolbar-btn toolbar-btn-primary px-4 py-1.5 rounded text-sm font-bold shadow-lg"
+                >
+                  完成
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* 1. TOP TOOLBAR */}
       <div className="top-toolbar z-10 shrink-0">
-        <div className="hidden md:flex h-14 items-center justify-between px-4">
+        <div className={`${isCompactLandscape ? 'hidden' : 'hidden md:flex'} h-14 items-center justify-between px-4`}>
           <div className="flex items-center gap-4">
             <span className="font-semibold text-lg tracking-[0.12em] text-gray-200 flex items-center gap-1.5 uppercase">
               <Thermometer className="text-orange-400 w-5 h-5" />
@@ -1296,7 +1714,7 @@ const App: React.FC = () => {
               </button>
             )}
 
-            <button onClick={handleOpenExportModal} className="toolbar-btn shrink-0 p-1.5 md:px-2 md:py-1.5 rounded flex items-center gap-1" title="导出 CSV">
+            <button onClick={handleOpenExportModal} className="toolbar-btn shrink-0 p-1.5 md:px-2 md:py-1.5 rounded flex items-center gap-1" title="导出记录">
               <Download size={14} className="md:w-4 md:h-4" />
               <span className="hidden md:inline text-xs">导出</span>
             </button>
@@ -1304,56 +1722,40 @@ const App: React.FC = () => {
               <FileInput size={14} className="md:w-4 md:h-4" />
               <span className="hidden md:inline text-xs">背景</span>
             </button>
+            <button
+              onClick={handleClearBackground}
+              disabled={!hasBackgroundCurve}
+              className="toolbar-btn shrink-0 p-1.5 md:px-2 md:py-1.5 rounded flex items-center gap-1 disabled:opacity-40 disabled:cursor-not-allowed disabled:transform-none"
+              title="清除背景曲线"
+            >
+              <Trash2 size={14} className="md:w-4 md:h-4" />
+              <span className="hidden md:inline text-xs">清背景</span>
+            </button>
+            <button onClick={() => setIsSettingsModalOpen(true)} className="toolbar-btn shrink-0 p-1.5 md:px-2 md:py-1.5 rounded flex items-center gap-1" title="设置">
+              <Settings size={14} className="md:w-4 md:h-4" />
+              <span className="hidden md:inline text-xs">设置</span>
+            </button>
 
             {!isDeviceConnected && (
-              <>
-                <button
-                  onClick={handleWebSocketConnect}
-                  disabled={isConnecting}
-                  className="toolbar-btn shrink-0 px-2 py-1.5 md:px-3 rounded font-bold text-xs md:text-sm flex items-center gap-1 disabled:opacity-40 disabled:cursor-not-allowed disabled:transform-none"
-                  title="连接 Artisan WebSocket (WiFi)"
-                >
-                  {isConnecting ? (
-                    <Loader2 size={14} className="animate-spin md:w-4 md:h-4" />
-                  ) : (
-                    <Wifi size={14} className="md:w-4 md:h-4" />
-                  )}
-                  <span className="hidden md:inline">{isConnecting ? '...' : 'WiFi'}</span>
-                </button>
-
-                <button
-                  onClick={handleSerialConnect}
-                  disabled={isConnecting}
-                  className="toolbar-btn shrink-0 px-2 py-1.5 md:px-3 rounded font-bold text-xs md:text-sm flex items-center gap-1 disabled:opacity-40 disabled:cursor-not-allowed disabled:transform-none"
-                  title="连接传统蓝牙(SPP)或USB串口"
-                >
-                  {isConnecting ? (
-                    <Loader2 size={14} className="animate-spin md:w-4 md:h-4" />
-                  ) : (
-                    <Usb size={14} className="md:w-4 md:h-4" />
-                  )}
-                  <span className="hidden md:inline">{isConnecting ? '...' : '串口/SPP'}</span>
-                </button>
-
-                <button
-                  onClick={handleBluetoothConnect}
-                  disabled={isConnecting}
-                  className="toolbar-btn toolbar-btn-primary shrink-0 px-2 py-1.5 md:px-3 rounded font-bold text-xs md:text-sm flex items-center gap-1 disabled:opacity-40 disabled:cursor-not-allowed disabled:transform-none"
-                >
-                  {isConnecting ? (
-                    <Loader2 size={14} className="animate-spin md:w-4 md:h-4" />
-                  ) : (
-                    <Bluetooth size={14} className="md:w-4 md:h-4" />
-                  )}
-                  <span className="inline">{isConnecting ? '...' : 'BLE'}</span>
-                </button>
-              </>
+              <button
+                onClick={handleWebSocketConnect}
+                disabled={isConnecting}
+                className="toolbar-btn toolbar-btn-primary shrink-0 px-2 py-1.5 md:px-3 rounded font-bold text-xs md:text-sm flex items-center gap-1 disabled:opacity-40 disabled:cursor-not-allowed disabled:transform-none"
+                title="连接 Artisan WebSocket (WiFi)"
+              >
+                {isConnecting ? (
+                  <Loader2 size={14} className="animate-spin md:w-4 md:h-4" />
+                ) : (
+                  <Wifi size={14} className="md:w-4 md:h-4" />
+                )}
+                <span className="inline">{isConnecting ? '...' : 'WiFi'}</span>
+              </button>
             )}
           </div>
         </div>
 
         {/* Mobile Toolbar */}
-        <div className="md:hidden px-2 py-2 flex flex-col gap-2">
+        <div className={`${isCompactLandscape ? 'flex' : 'md:hidden'} px-2 ${isCompactLandscape ? 'py-1.5' : 'py-2'} flex flex-col ${isCompactLandscape ? 'gap-1.5' : 'gap-2'}`}>
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-2 min-w-0">
               <Thermometer className="text-orange-400 w-4 h-4 shrink-0" />
@@ -1400,7 +1802,7 @@ const App: React.FC = () => {
           </div>
 
           {!isDeviceConnected ? (
-            <div className="grid grid-cols-3 gap-1.5">
+            <div className="grid grid-cols-1 gap-1.5">
               <button
                 onClick={handleWebSocketConnect}
                 disabled={isConnecting}
@@ -1408,22 +1810,6 @@ const App: React.FC = () => {
               >
                 {isConnecting ? <Loader2 size={12} className="animate-spin" /> : <Wifi size={12} />}
                 WiFi
-              </button>
-              <button
-                onClick={handleSerialConnect}
-                disabled={isConnecting}
-                className="toolbar-btn py-1.5 rounded text-[11px] font-semibold flex items-center justify-center gap-1 disabled:opacity-45"
-              >
-                {isConnecting ? <Loader2 size={12} className="animate-spin" /> : <Usb size={12} />}
-                串口
-              </button>
-              <button
-                onClick={handleBluetoothConnect}
-                disabled={isConnecting}
-                className="toolbar-btn toolbar-btn-primary py-1.5 rounded text-[11px] font-semibold flex items-center justify-center gap-1 disabled:opacity-45"
-              >
-                {isConnecting ? <Loader2 size={12} className="animate-spin" /> : <Bluetooth size={12} />}
-                BLE
               </button>
             </div>
           ) : (
@@ -1433,12 +1819,22 @@ const App: React.FC = () => {
             </div>
           )}
 
-          <div className="grid grid-cols-2 gap-1.5">
+          <div className="grid grid-cols-4 gap-1.5">
             <button onClick={handleOpenExportModal} className="toolbar-btn py-1.5 rounded text-[11px] font-semibold flex items-center justify-center gap-1">
               <Download size={12} /> 导出
             </button>
             <button onClick={handleBackgroundClick} className="toolbar-btn py-1.5 rounded text-[11px] font-semibold flex items-center justify-center gap-1">
               <FileInput size={12} /> 背景
+            </button>
+            <button
+              onClick={handleClearBackground}
+              disabled={!hasBackgroundCurve}
+              className="toolbar-btn py-1.5 rounded text-[11px] font-semibold flex items-center justify-center gap-1 disabled:opacity-45 disabled:cursor-not-allowed"
+            >
+              <Trash2 size={12} /> 清背景
+            </button>
+            <button onClick={() => setIsSettingsModalOpen(true)} className="toolbar-btn py-1.5 rounded text-[11px] font-semibold flex items-center justify-center gap-1">
+              <Settings size={12} /> 设置
             </button>
           </div>
         </div>
@@ -1485,27 +1881,41 @@ const App: React.FC = () => {
         )}
 
         {/* DESKTOP LEFT SIDEBAR: Large LCD Displays - HIDDEN ON MOBILE */}
-        <div className="
-            hidden md:flex w-64 panel-surface border-r p-3 
-            flex-col gap-2 overflow-y-auto shrink-0 no-scrollbar
-        ">
-            <div className="mb-2 pb-2 border-b border-[#31404f] text-[11px] font-semibold text-[#8ea0b3] uppercase tracking-[0.15em]">实时温度</div>
-            <StatCard label="Bean Temp" value={currentBT.toFixed(1)} unit="°C" color="red" />
-            {hasLiveET && <StatCard label="Env Temp" value={currentET.toFixed(1)} unit="°C" color="blue" />}
+        <div className={`
+            ${isCompactLandscape ? 'hidden' : 'hidden md:flex'} panel-surface border-r 
+            ${isCompactLandscape ? 'w-44 p-2 gap-1.5' : 'w-64 p-3 gap-2'}
+            flex-col overflow-y-auto shrink-0 no-scrollbar
+        `}>
+            <div className={`${isCompactLandscape ? 'mb-1.5 pb-1.5 text-[10px]' : 'mb-2 pb-2 text-[11px]'} border-b border-[#31404f] font-semibold text-[#8ea0b3] uppercase tracking-[0.15em]`}>实时温度</div>
+            <StatCard compact={isCompactLandscape} label="Bean Temp" value={currentBT.toFixed(1)} unit="°C" color="red" />
+            {hasLiveET && <StatCard compact={isCompactLandscape} label="Env Temp" value={currentET.toFixed(1)} unit="°C" color="blue" />}
             
-            <div className="my-2 pb-2 border-b border-[#31404f] text-[11px] font-semibold text-[#8ea0b3] uppercase tracking-[0.15em]">温升率</div>
-            <StatCard label="BT RoR" value={currentRoR.toFixed(1)} unit="°/min" color="yellow" />
-            {hasLiveET && <StatCard label="ET RoR" value={currentETRoR.toFixed(1)} unit="°/min" color="cyan" />}
+            {hasAnyRoRDisplay && (
+              <>
+                <div className={`${isCompactLandscape ? 'my-1.5 pb-1.5 text-[10px]' : 'my-2 pb-2 text-[11px]'} border-b border-[#31404f] font-semibold text-[#8ea0b3] uppercase tracking-[0.15em]`}>温升率</div>
+                {showBtRoR && <StatCard compact={isCompactLandscape} label="BT RoR" value={currentRoR.toFixed(1)} unit="°/min" color="yellow" />}
+                {showEtRoRSeries && <StatCard compact={isCompactLandscape} label="ET RoR" value={currentETRoR.toFixed(1)} unit="°/min" color="cyan" />}
+              </>
+            )}
             
-            <div className="my-2 pb-2 border-b border-[#31404f] text-[11px] font-semibold text-[#8ea0b3] uppercase tracking-[0.15em]">时间</div>
-            <StatCard label="TIME" value={getDuration()} color="green" />
+            <div className={`${isCompactLandscape ? 'my-1.5 pb-1.5 text-[10px]' : 'my-2 pb-2 text-[11px]'} border-b border-[#31404f] font-semibold text-[#8ea0b3] uppercase tracking-[0.15em]`}>时间</div>
+            <StatCard compact={isCompactLandscape} label="TIME" value={getDuration()} color="green" />
+            {showDevelopmentRatio && (
+              <StatCard
+                compact={isCompactLandscape}
+                label="发展率 DTR"
+                value={developmentRatio.toFixed(1)}
+                unit="%"
+                color="cyan"
+              />
+            )}
         </div>
 
         {/* CENTER COLUMN: Chart + Mobile Ticker */}
         <div className="flex-1 bg-[#131920]/80 flex flex-col relative min-h-0">
             
             {/* MOBILE ONLY: Data Ticker */}
-            <div className={`md:hidden h-12 panel-surface border-b grid ${hasLiveET ? 'grid-cols-4' : 'grid-cols-3'} gap-1 px-1.5 py-1 shrink-0 z-10`}>
+            <div className={`${isCompactLandscape ? 'grid h-11' : 'md:hidden grid h-12'} panel-surface border-b ${mobileTickerGridClass} gap-1 px-1.5 py-1 shrink-0 z-10`}>
                <div className="rounded bg-[#0f151d]/70 border border-[#263444] flex flex-col items-center justify-center">
                   <span className="text-[8px] text-gray-500 font-semibold uppercase tracking-wide">BT</span>
                   <span className="text-sm font-mono font-bold text-[#ff6b6b] leading-none">{currentBT.toFixed(1)}</span>
@@ -1516,37 +1926,56 @@ const App: React.FC = () => {
                     <span className="text-sm font-mono font-bold text-[#58a6ff] leading-none">{currentET.toFixed(1)}</span>
                  </div>
                )}
-               <div className="rounded bg-[#0f151d]/70 border border-[#263444] flex flex-col items-center justify-center">
-                  <span className="text-[8px] text-gray-500 font-semibold uppercase tracking-wide">RoR</span>
-                  <span className="text-sm font-mono font-bold text-[#ffd84d] leading-none">{currentRoR.toFixed(1)}</span>
-               </div>
+               {showBtRoR && (
+                 <div className="rounded bg-[#0f151d]/70 border border-[#263444] flex flex-col items-center justify-center">
+                    <span className="text-[8px] text-gray-500 font-semibold uppercase tracking-wide">BT RoR</span>
+                    <span className="text-sm font-mono font-bold text-[#ffd84d] leading-none">{currentRoR.toFixed(1)}</span>
+                 </div>
+               )}
+               {showEtRoRSeries && (
+                 <div className="rounded bg-[#0f151d]/70 border border-[#263444] flex flex-col items-center justify-center">
+                    <span className="text-[8px] text-gray-500 font-semibold uppercase tracking-wide">ET RoR</span>
+                    <span className="text-sm font-mono font-bold text-[#59d2ff] leading-none">{currentETRoR.toFixed(1)}</span>
+                 </div>
+               )}
+               {showDevelopmentRatio && (
+                 <div className="rounded bg-[#0f151d]/70 border border-[#263444] flex flex-col items-center justify-center">
+                    <span className="text-[8px] text-gray-500 font-semibold uppercase tracking-wide">DTR</span>
+                    <span className="text-sm font-mono font-bold text-[#59d2ff] leading-none">{developmentRatio.toFixed(1)}%</span>
+                 </div>
+               )}
                <div className="rounded bg-[#0f151d]/70 border border-[#263444] flex flex-col items-center justify-center">
                   <span className="text-[8px] text-gray-500 font-semibold uppercase tracking-wide">时间</span>
                   <span className="text-[11px] font-mono font-bold text-[#4adf8f] leading-none">{getDuration()}</span>
                </div>
             </div>
 
-            <div className="flex-1 p-0 md:p-1 md:pb-0 relative min-h-0">
+            <div className={`flex-1 ${isCompactLandscape ? 'p-0.5' : 'p-0 md:p-1 md:pb-0'} relative min-h-0`}>
                 <RoastChart 
                     data={data} 
                     events={events} 
                     currentBT={currentBT}
                     currentET={currentET}
                     currentRoR={currentRoR}
+                    currentETRoR={currentETRoR}
                     backgroundData={backgroundData}
                     showLiveET={hasLiveET}
                     showBackgroundET={hasBackgroundET}
+                    showBtRoR={showBtRoR}
+                    showEtRoR={showEtRoRSeries}
+                    compactMode={isCompactLandscape}
                 />
             </div>
         </div>
 
         {/* RIGHT COLUMN: Controls & Events */}
         {/* Mobile: Bottom Grid | Desktop: Right Sidebar */}
-        <div className="
-            w-full md:w-48 panel-surface border-t md:border-t-0 md:border-l p-2 
+        <div className={`
+            w-full ${isCompactLandscape ? 'md:w-40 p-1.5' : 'md:w-48 p-2'} panel-surface border-t md:border-t-0 md:border-l
             flex flex-col md:flex-col gap-2 shrink-0 
             pb-safe md:pb-2 z-20
-        ">
+            ${isCompactLandscape ? 'overflow-y-auto no-scrollbar' : ''}
+        `}>
              {/* Mobile Event Layout: Primary events + expandable secondary events */}
              <div className="md:hidden flex flex-col gap-1.5 mb-safe-offset">
                  <div className="flex items-center justify-between px-0.5">
@@ -1617,8 +2046,8 @@ const App: React.FC = () => {
                  )}
              </div>
 
-             <div className="hidden md:block text-[11px] font-semibold text-[#8ea0b3] uppercase tracking-[0.15em] mb-1 text-center">事件标记</div>
-             <div className="hidden md:flex md:flex-col gap-2">
+             <div className={`hidden md:block ${isCompactLandscape ? 'text-[10px] mb-0.5' : 'text-[11px] mb-1'} font-semibold text-[#8ea0b3] uppercase tracking-[0.15em] text-center`}>事件标记</div>
+             <div className={isCompactLandscape ? 'hidden md:grid md:grid-cols-2 gap-1.5' : 'hidden md:flex md:flex-col gap-2'}>
                  {eventButtons.map((btn) => {
                      const isActive = hasEvent(btn.label);
 
@@ -1628,7 +2057,7 @@ const App: React.FC = () => {
                          onClick={btn.action}
                          disabled={status !== RoastStatus.ROASTING || btn.disabled}
                          className={`
-                           w-full py-3 font-semibold text-xs rounded-md transition-all border select-none active:scale-95 touch-manipulation tracking-wide
+                           w-full ${isCompactLandscape ? 'py-2 text-[11px]' : 'py-3 text-xs'} font-semibold rounded-md transition-all border select-none active:scale-95 touch-manipulation tracking-wide
                            ${status !== RoastStatus.ROASTING || btn.disabled
                              ? 'bg-[#262e37] text-[#5d6a79] border-[#2e3844] shadow-none'
                              : isActive
@@ -1644,7 +2073,7 @@ const App: React.FC = () => {
              </div>
 
              {/* Event Log / Debug Terminal */}
-             <div className="mt-auto border-t border-[#31404f] pt-3 hidden md:flex flex-col gap-2">
+             <div className={`${isCompactLandscape ? 'hidden' : 'hidden md:flex'} mt-auto border-t border-[#31404f] pt-3 flex-col gap-2`}>
                  <div className="text-[10px] font-semibold text-[#7d8ea0] uppercase tracking-[0.12em] flex items-center justify-between px-1">
                     <span className="flex items-center gap-2">
                         {showRawLog ? <Bug size={10} className="text-orange-400" /> : <Terminal size={10} />}
