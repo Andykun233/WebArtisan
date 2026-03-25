@@ -868,6 +868,7 @@ const App: React.FC = () => {
   const [exportFileName, setExportFileName] = useState("");
   const [exportFormat, setExportFormat] = useState<ExportFormat>('csv');
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
+  const [isClearModalOpen, setIsClearModalOpen] = useState(false);
   const [samplingIntervalSeconds, setSamplingIntervalSeconds] = useState<number>(3);
   const [swapBtEt, setSwapBtEt] = useState(false);
   const [showBtRoR, setShowBtRoR] = useState(true);
@@ -1207,11 +1208,35 @@ const App: React.FC = () => {
       if (backgroundInputRef.current) backgroundInputRef.current.click();
   };
 
+  const handleOpenClearModal = () => {
+      const hasBackground = backgroundData.length > 0 || backgroundEvents.length > 0;
+      const hasCurrent = data.length > 0 || events.length > 0 || status === RoastStatus.ROASTING || status === RoastStatus.FINISHED;
+
+      if (!hasBackground && !hasCurrent) {
+          setErrorMsg("当前没有可清除的内容");
+          setTimeout(() => setErrorMsg(null), 2500);
+          return;
+      }
+
+      setIsClearModalOpen(true);
+  };
+
   const handleClearBackground = () => {
       setBackgroundData([]);
       setBackgroundEvents([]);
       if (backgroundInputRef.current) backgroundInputRef.current.value = "";
+      setIsClearModalOpen(false);
       setSuccessMsg("已清除背景曲线");
+      setTimeout(() => setSuccessMsg(null), 3000);
+  };
+
+  const handleClearCurrentCurve = async () => {
+      const confirmed = window.confirm("确认清除目前曲线吗？此操作不可撤销。");
+      if (!confirmed) return;
+
+      await handleReset();
+      setIsClearModalOpen(false);
+      setSuccessMsg("已清除目前曲线");
       setTimeout(() => setSuccessMsg(null), 3000);
   };
 
@@ -1457,6 +1482,8 @@ const App: React.FC = () => {
   const nextEventHint = orderedEventLabels.find(label => !hasEvent(label)) || "流程完成";
   const isDeviceConnected = activeService !== null;
   const hasBackgroundCurve = backgroundData.length > 0 || backgroundEvents.length > 0;
+  const hasCurrentCurve = data.length > 0 || events.length > 0 || status === RoastStatus.ROASTING || status === RoastStatus.FINISHED;
+  const hasAnyClearable = hasBackgroundCurve || hasCurrentCurve;
   const elapsedRoastSeconds = getElapsedSeconds();
   const firstCrackStartEvent = events.find((event) => event.label === "一爆开始");
   const showDevelopmentRatio = !!firstCrackStartEvent && elapsedRoastSeconds >= firstCrackStartEvent.time;
@@ -1645,6 +1672,52 @@ const App: React.FC = () => {
         </div>
       )}
 
+      {/* CLEAR MODAL */}
+      {isClearModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+          <div className="panel-surface border rounded-lg shadow-2xl w-full max-w-sm overflow-hidden">
+            <div className="px-4 py-3 border-b border-[#2f3944] flex justify-between items-center bg-[#252f3a]/80">
+              <span className="font-bold text-gray-200 flex items-center gap-2">
+                <Trash2 size={16} /> 清除
+              </span>
+              <button onClick={() => setIsClearModalOpen(false)} className="text-gray-500 hover:text-gray-300">
+                <X size={18} />
+              </button>
+            </div>
+            <div className="p-4 flex flex-col gap-3">
+              <button
+                type="button"
+                onClick={handleClearBackground}
+                disabled={!hasBackgroundCurve}
+                className="toolbar-btn w-full px-3 py-2 rounded text-sm font-bold disabled:opacity-45 disabled:cursor-not-allowed"
+              >
+                清除背景曲线
+              </button>
+              <button
+                type="button"
+                onClick={handleClearCurrentCurve}
+                disabled={!hasCurrentCurve}
+                className="toolbar-btn toolbar-btn-danger w-full px-3 py-2 rounded text-sm font-bold disabled:opacity-45 disabled:cursor-not-allowed"
+              >
+                清除目前曲线
+              </button>
+              <div className="text-[11px] text-gray-400">
+                清除目前曲线会弹出二次确认。
+              </div>
+              <div className="flex justify-end pt-1">
+                <button
+                  type="button"
+                  onClick={() => setIsClearModalOpen(false)}
+                  className="toolbar-btn px-3 py-1.5 rounded text-sm font-bold text-gray-300"
+                >
+                  取消
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* 1. TOP TOOLBAR */}
       <div className="top-toolbar z-10 shrink-0">
         <div className={`${isCompactLandscape ? 'hidden' : 'hidden md:flex'} h-14 items-center justify-between px-4`}>
@@ -1723,13 +1796,13 @@ const App: React.FC = () => {
               <span className="hidden md:inline text-xs">背景</span>
             </button>
             <button
-              onClick={handleClearBackground}
-              disabled={!hasBackgroundCurve}
+              onClick={handleOpenClearModal}
+              disabled={!hasAnyClearable}
               className="toolbar-btn shrink-0 p-1.5 md:px-2 md:py-1.5 rounded flex items-center gap-1 disabled:opacity-40 disabled:cursor-not-allowed disabled:transform-none"
-              title="清除背景曲线"
+              title="清除选项"
             >
               <Trash2 size={14} className="md:w-4 md:h-4" />
-              <span className="hidden md:inline text-xs">清背景</span>
+              <span className="hidden md:inline text-xs">清除</span>
             </button>
             <button onClick={() => setIsSettingsModalOpen(true)} className="toolbar-btn shrink-0 p-1.5 md:px-2 md:py-1.5 rounded flex items-center gap-1" title="设置">
               <Settings size={14} className="md:w-4 md:h-4" />
@@ -1827,11 +1900,11 @@ const App: React.FC = () => {
               <FileInput size={12} /> 背景
             </button>
             <button
-              onClick={handleClearBackground}
-              disabled={!hasBackgroundCurve}
+              onClick={handleOpenClearModal}
+              disabled={!hasAnyClearable}
               className="toolbar-btn py-1.5 rounded text-[11px] font-semibold flex items-center justify-center gap-1 disabled:opacity-45 disabled:cursor-not-allowed"
             >
-              <Trash2 size={12} /> 清背景
+              <Trash2 size={12} /> 清除
             </button>
             <button onClick={() => setIsSettingsModalOpen(true)} className="toolbar-btn py-1.5 rounded text-[11px] font-semibold flex items-center justify-center gap-1">
               <Settings size={12} /> 设置
