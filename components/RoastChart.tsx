@@ -24,6 +24,7 @@ interface RoastChartProps {
   showBackgroundET?: boolean;
   showBtRoR?: boolean;
   showEtRoR?: boolean;
+  language?: 'zh-CN' | 'en';
   compactMode?: boolean;
 }
 
@@ -32,6 +33,18 @@ const MIN_TEMP_SPAN = 120;
 const MIN_ROR_SPAN = 20;
 const X_AXIS_BASE_SECONDS = 10 * 60; // Keep timeline fixed at 10 min until data exceeds it.
 const TEMP_AXIS_BASE_MAX = 300; // Keep temp axis fixed at 300C until data exceeds it.
+const EVENT_LABEL_EN: Record<string, string> = {
+  '预热': 'Preheat',
+  '开始': 'Start',
+  '入豆': 'Charge',
+  '回温点': 'Turning Point',
+  '脱水结束': 'Dry End',
+  '一爆开始': 'FC Start',
+  '一爆结束': 'FC End',
+  '二爆开始': 'SC Start',
+  '二爆结束': 'SC End',
+  '下豆': 'Drop'
+};
 
 const formatClock = (seconds: number) => {
   const safe = Number.isFinite(seconds) ? Math.max(0, Math.round(seconds)) : 0;
@@ -52,8 +65,21 @@ const RoastChart: React.FC<RoastChartProps> = ({
   showBackgroundET,
   showBtRoR,
   showEtRoR,
+  language = 'zh-CN',
   compactMode = false
 }) => {
+  const isZh = language === 'zh-CN';
+  const displayEventLabel = (label: string) => (isZh ? label : (EVENT_LABEL_EN[label] || label));
+  const refBtLabel = isZh ? '参考 BT' : 'Ref BT';
+  const refEtLabel = isZh ? '参考 ET' : 'Ref ET';
+  const refRorLabel = isZh ? '参考 RoR' : 'Ref RoR';
+  const btHudLabel = isZh ? 'BT (豆温)' : 'BT (Bean)';
+  const etHudLabel = isZh ? 'ET (炉温)' : 'ET (Env)';
+  const btLineName = isZh ? '豆温 BT' : 'Bean Temp';
+  const etLineName = isZh ? '环境温 ET' : 'Env Temp';
+  const btRorLineName = 'BT RoR';
+  const etRorLineName = 'ET RoR';
+
   // Must consider both live and reference curves to scale axes correctly.
   const hasDetectedLiveET = currentET > ET_PRESENT_THRESHOLD || data.some((d) => Number.isFinite(d.et) && d.et > ET_PRESENT_THRESHOLD);
   const hasDetectedBackgroundET = backgroundData.some((d) => Number.isFinite(d.et) && d.et > ET_PRESENT_THRESHOLD);
@@ -172,18 +198,18 @@ const RoastChart: React.FC<RoastChartProps> = ({
         <div className="absolute top-2 left-2 z-10 bg-[#0b121a]/80 border border-[#3a4a5c] rounded px-2 py-1.5 text-[10px] font-mono text-[#a8b7c8] flex items-center gap-3 pointer-events-none">
           <div className="flex items-center gap-1.5">
             <span className="inline-block w-5 h-0 border-t-2 border-dashed border-[#ff9f9f] opacity-80"></span>
-            <span>参考 BT</span>
+            <span>{refBtLabel}</span>
           </div>
           {hasBackgroundET && (
             <div className="flex items-center gap-1.5">
               <span className="inline-block w-5 h-0 border-t-2 border-dotted border-[#86bcff] opacity-80"></span>
-              <span>参考 ET</span>
+              <span>{refEtLabel}</span>
             </div>
           )}
           {displayBtRoR && (
             <div className="flex items-center gap-1.5">
               <span className="inline-block w-5 h-0 border-t border-dashed border-[#ffe08a] opacity-80"></span>
-              <span>参考 RoR</span>
+              <span>{refRorLabel}</span>
             </div>
           )}
         </div>
@@ -194,12 +220,12 @@ const RoastChart: React.FC<RoastChartProps> = ({
         <div className="flex gap-4 text-xs font-mono font-bold">
            <div className="flex flex-col items-center">
               <span className="text-[#ff6b6b]">{currentBT.toFixed(1)}</span>
-              <span className="text-gray-500 text-[9px]">BT (豆温)</span>
+              <span className="text-gray-500 text-[9px]">{btHudLabel}</span>
            </div>
            {hasLiveET && (
              <div className="flex flex-col items-center">
                 <span className="text-[#58a6ff]">{currentET.toFixed(1)}</span>
-                <span className="text-gray-500 text-[9px]">ET (炉温)</span>
+                <span className="text-gray-500 text-[9px]">{etHudLabel}</span>
              </div>
            )}
            {displayBtRoR && (
@@ -284,7 +310,7 @@ const RoastChart: React.FC<RoastChartProps> = ({
                     strokeLinecap="round"
                     strokeLinejoin="round"
                     yAxisId="left" 
-                    name="参考 BT" 
+                    name={refBtLabel} 
                     isAnimationActive={false}
                 />
                 {hasBackgroundET && (
@@ -300,7 +326,7 @@ const RoastChart: React.FC<RoastChartProps> = ({
                       strokeLinecap="round"
                       strokeLinejoin="round"
                       yAxisId="left" 
-                      name="参考 ET" 
+                      name={refEtLabel} 
                       isAnimationActive={false}
                   />
                 )}
@@ -317,7 +343,7 @@ const RoastChart: React.FC<RoastChartProps> = ({
                       strokeLinecap="round"
                       strokeLinejoin="round"
                       yAxisId="right"
-                      name="参考 RoR"
+                      name={refRorLabel}
                       isAnimationActive={false}
                       connectNulls
                   />
@@ -335,7 +361,7 @@ const RoastChart: React.FC<RoastChartProps> = ({
             strokeLinecap="round"
             strokeLinejoin="round"
             yAxisId="left" 
-            name="Bean Temp" 
+            name={btLineName} 
             isAnimationActive={false} 
           />
           
@@ -349,7 +375,7 @@ const RoastChart: React.FC<RoastChartProps> = ({
                 strokeLinecap="round"
                 strokeLinejoin="round"
                 yAxisId="left" 
-                name="Env Temp" 
+                name={etLineName} 
                 isAnimationActive={false} 
             />
           )}
@@ -364,7 +390,7 @@ const RoastChart: React.FC<RoastChartProps> = ({
               strokeLinecap="round"
               strokeLinejoin="round"
               yAxisId="right" 
-              name="BT RoR" 
+              name={btRorLineName} 
               isAnimationActive={false} 
               connectNulls
             />
@@ -380,7 +406,7 @@ const RoastChart: React.FC<RoastChartProps> = ({
               strokeLinecap="round"
               strokeLinejoin="round"
               yAxisId="right"
-              name="ET RoR"
+              name={etRorLineName}
               isAnimationActive={false}
               connectNulls
             />
@@ -457,7 +483,7 @@ const RoastChart: React.FC<RoastChartProps> = ({
                 strokeOpacity={0.75}
                 strokeDasharray="3 3"
                 label={labeledEventIndexes.has(index) ? {
-                  value: event.label,
+                  value: displayEventLabel(event.label),
                   position: 'insideTopLeft',
                   fill: '#8ea0b3',
                   fontSize: 10,

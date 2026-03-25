@@ -76,6 +76,298 @@ function normalizeRoR(value: number): number {
 }
 
 const ET_PRESENT_THRESHOLD = 1.0;
+type AppLanguage = 'zh-CN' | 'en';
+
+const EVENT_LABEL_TRANSLATIONS: Record<string, { 'zh-CN': string; en: string }> = {
+  '预热': { 'zh-CN': '预热', en: 'Preheat' },
+  '开始': { 'zh-CN': '开始', en: 'Start' },
+  '入豆': { 'zh-CN': '入豆', en: 'Charge' },
+  '回温点': { 'zh-CN': '回温点', en: 'Turning Point' },
+  '脱水结束': { 'zh-CN': '脱水结束', en: 'Dry End' },
+  '一爆开始': { 'zh-CN': '一爆开始', en: 'FC Start' },
+  '一爆结束': { 'zh-CN': '一爆结束', en: 'FC End' },
+  '二爆开始': { 'zh-CN': '二爆开始', en: 'SC Start' },
+  '二爆结束': { 'zh-CN': '二爆结束', en: 'SC End' },
+  '下豆': { 'zh-CN': '下豆', en: 'Drop' }
+};
+
+function formatEventLabel(label: string, language: AppLanguage): string {
+  const translated = EVENT_LABEL_TRANSLATIONS[label];
+  if (!translated) return label;
+  return translated[language];
+}
+
+const UI_TEXT: Record<AppLanguage, {
+  settings: string;
+  done: string;
+  language: string;
+  langZh: string;
+  langEn: string;
+  samplingInterval: string;
+  seconds: string;
+  swapBtEt: string;
+  showBtRoR: string;
+  showEtRoR: string;
+  exportRecord: string;
+  fileName: string;
+  exportFormat: string;
+  cancel: string;
+  confirmExport: string;
+  clear: string;
+  clearBackgroundCurve: string;
+  clearCurrentCurve: string;
+  clearCurrentCurveHint: string;
+  systemStatus: string;
+  status: string;
+  signal: string;
+  initializing: string;
+  ready: string;
+  waitingConnection: string;
+  device: string;
+  mode: string;
+  signalStrong: string;
+  pleaseConnectDevice: string;
+  connectPromptDefault: string;
+  connectPromptMessage: string;
+  start: string;
+  drop: string;
+  reset: string;
+  startRoastTitle: string;
+  connectBeforeStartTitle: string;
+  export: string;
+  background: string;
+  loadBackgroundCurve: string;
+  clearOptions: string;
+  connectWifiTitle: string;
+  statusConnecting: string;
+  statusOnline: string;
+  statusOffline: string;
+  modeWebSocket: string;
+  modeSimulation: string;
+  modeUnknown: string;
+  mobilePlaybackMode: string;
+  mobileDeviceNotConnected: string;
+  unknownDevice: string;
+  undoDropTitle: string;
+  undoDropDesc: string;
+  undo: string;
+  realtimeTemperature: string;
+  rateOfRise: string;
+  time: string;
+  dtr: string;
+  eventShortcuts: string;
+  nextStep: string;
+  idle: string;
+  collapseEvents: string;
+  moreEvents: string;
+  eventMarkers: string;
+  rawData: string;
+  eventLog: string;
+  toggleView: string;
+  viewEvents: string;
+  viewData: string;
+  waitingRecord: string;
+  noDataHint: string;
+  noDataConnectHint: string;
+  msgDisconnected: string;
+  msgEnterIp: string;
+  msgInvalidIp: string;
+  msgWsConnectFailed: string;
+  msgConnectFirst: string;
+  msgNoDataToExport: string;
+  msgExportSuccess: string;
+  msgNoClearable: string;
+  msgClearedBackground: string;
+  msgClearCurrentConfirm: string;
+  msgClearedCurrent: string;
+  msgLoadedBackground: string;
+  msgImportSuccess: string;
+  msgImportFailedBackground: string;
+  msgImportFailed: string;
+  msgFileFormatError: string;
+  unitSecond: string;
+}> = {
+  'zh-CN': {
+    settings: '设置',
+    done: '完成',
+    language: '语言',
+    langZh: '简体中文',
+    langEn: 'English',
+    samplingInterval: '采样时间',
+    seconds: '秒',
+    swapBtEt: 'BT / ET 温度互换',
+    showBtRoR: '显示 BT RoR',
+    showEtRoR: '显示 ET RoR',
+    exportRecord: '导出记录',
+    fileName: '文件名',
+    exportFormat: '导出格式',
+    cancel: '取消',
+    confirmExport: '确认导出',
+    clear: '清除',
+    clearBackgroundCurve: '清除背景曲线',
+    clearCurrentCurve: '清除目前曲线',
+    clearCurrentCurveHint: '清除目前曲线会弹出二次确认。',
+    systemStatus: '系统状态',
+    status: '状态',
+    signal: '信号',
+    initializing: '初始化中...',
+    ready: '已就绪',
+    waitingConnection: '等待连接',
+    device: '设备',
+    mode: '模式',
+    signalStrong: '强',
+    pleaseConnectDevice: '请点击右侧按钮连接设备',
+    connectPromptDefault: '请输入Roast32的IP地址',
+    connectPromptMessage: '请输入设备 IP 地址（仅 IP）\n连接地址将固定为: ws://<IP>:80/ws',
+    start: '开始',
+    drop: '下豆',
+    reset: '重置',
+    startRoastTitle: '开始烘焙',
+    connectBeforeStartTitle: '连接设备后可开始',
+    export: '导出',
+    background: '背景',
+    loadBackgroundCurve: '加载背景曲线',
+    clearOptions: '清除选项',
+    connectWifiTitle: '连接 Artisan WebSocket (WiFi)',
+    statusConnecting: '正在连接...',
+    statusOnline: '设备在线',
+    statusOffline: '未连接',
+    modeWebSocket: 'WebSocket',
+    modeSimulation: '模拟',
+    modeUnknown: '未知',
+    mobilePlaybackMode: '回放模式（未连接设备）',
+    mobileDeviceNotConnected: '设备未连接',
+    unknownDevice: '未知设备',
+    undoDropTitle: '已下豆 (Roast Finished)',
+    undoDropDesc: '烘焙已完成。误操作？',
+    undo: '撤销',
+    realtimeTemperature: '实时温度',
+    rateOfRise: '温升率',
+    time: '时间',
+    dtr: '发展率 DTR',
+    eventShortcuts: '事件快捷',
+    nextStep: '下一步',
+    idle: '待机',
+    collapseEvents: '收起事件',
+    moreEvents: '更多事件',
+    eventMarkers: '事件标记',
+    rawData: '原始数据 (RAW)',
+    eventLog: '事件日志 (LOG)',
+    toggleView: '切换视图',
+    viewEvents: '查看事件',
+    viewData: '查看数据',
+    waitingRecord: '等待记录...',
+    noDataHint: '暂无数据...',
+    noDataConnectHint: '请连接设备',
+    msgDisconnected: '设备连接已断开',
+    msgEnterIp: '请输入设备 IP 地址',
+    msgInvalidIp: '无效的设备 IP 地址',
+    msgWsConnectFailed: 'WebSocket 连接失败',
+    msgConnectFirst: '请先连接设备，再开始烘焙',
+    msgNoDataToExport: '没有数据可导出',
+    msgExportSuccess: '导出成功：',
+    msgNoClearable: '当前没有可清除的内容',
+    msgClearedBackground: '已清除背景曲线',
+    msgClearCurrentConfirm: '确认清除目前曲线吗？此操作不可撤销。',
+    msgClearedCurrent: '已清除目前曲线',
+    msgLoadedBackground: '已加载背景曲线: ',
+    msgImportSuccess: '成功导入: ',
+    msgImportFailedBackground: '背景加载失败: ',
+    msgImportFailed: '导入失败: ',
+    msgFileFormatError: '文件格式错误',
+    unitSecond: '秒'
+  },
+  en: {
+    settings: 'Settings',
+    done: 'Done',
+    language: 'Language',
+    langZh: 'Simplified Chinese',
+    langEn: 'English',
+    samplingInterval: 'Sampling Interval',
+    seconds: 'sec',
+    swapBtEt: 'Swap BT / ET',
+    showBtRoR: 'Show BT RoR',
+    showEtRoR: 'Show ET RoR',
+    exportRecord: 'Export Roast',
+    fileName: 'File Name',
+    exportFormat: 'Export Format',
+    cancel: 'Cancel',
+    confirmExport: 'Export',
+    clear: 'Clear',
+    clearBackgroundCurve: 'Clear Background Curve',
+    clearCurrentCurve: 'Clear Current Curve',
+    clearCurrentCurveHint: 'Clearing current curve requires a second confirmation.',
+    systemStatus: 'System Status',
+    status: 'Status',
+    signal: 'Signal',
+    initializing: 'Initializing...',
+    ready: 'Ready',
+    waitingConnection: 'Waiting for connection',
+    device: 'Device',
+    mode: 'Mode',
+    signalStrong: 'Strong',
+    pleaseConnectDevice: 'Use the button on the right to connect the device',
+    connectPromptDefault: 'Enter Roast32 IP address',
+    connectPromptMessage: 'Enter device IP only\nConnection is fixed to: ws://<IP>:80/ws',
+    start: 'Start',
+    drop: 'Drop',
+    reset: 'Reset',
+    startRoastTitle: 'Start Roast',
+    connectBeforeStartTitle: 'Connect device before starting',
+    export: 'Export',
+    background: 'Background',
+    loadBackgroundCurve: 'Load Background Curve',
+    clearOptions: 'Clear Options',
+    connectWifiTitle: 'Connect Artisan WebSocket (WiFi)',
+    statusConnecting: 'Connecting...',
+    statusOnline: 'Online',
+    statusOffline: 'Offline',
+    modeWebSocket: 'WebSocket',
+    modeSimulation: 'Simulation',
+    modeUnknown: 'Unknown',
+    mobilePlaybackMode: 'Playback Mode (No device)',
+    mobileDeviceNotConnected: 'Device offline',
+    unknownDevice: 'Unknown Device',
+    undoDropTitle: 'Roast Finished',
+    undoDropDesc: 'Roast complete. Undo this action?',
+    undo: 'Undo',
+    realtimeTemperature: 'Temperature',
+    rateOfRise: 'Rate of Rise',
+    time: 'Time',
+    dtr: 'Development Ratio DTR',
+    eventShortcuts: 'Events',
+    nextStep: 'Next',
+    idle: 'Idle',
+    collapseEvents: 'Collapse',
+    moreEvents: 'More',
+    eventMarkers: 'Event Markers',
+    rawData: 'Raw Data (RAW)',
+    eventLog: 'Event Log (LOG)',
+    toggleView: 'Toggle View',
+    viewEvents: 'View Events',
+    viewData: 'View Data',
+    waitingRecord: 'Waiting for records...',
+    noDataHint: 'No data yet...',
+    noDataConnectHint: 'Connect a device',
+    msgDisconnected: 'Device disconnected',
+    msgEnterIp: 'Please enter device IP',
+    msgInvalidIp: 'Invalid device IP',
+    msgWsConnectFailed: 'WebSocket connection failed',
+    msgConnectFirst: 'Connect device before starting roast',
+    msgNoDataToExport: 'No data to export',
+    msgExportSuccess: 'Exported: ',
+    msgNoClearable: 'Nothing to clear',
+    msgClearedBackground: 'Background curve cleared',
+    msgClearCurrentConfirm: 'Clear current curve? This cannot be undone.',
+    msgClearedCurrent: 'Current curve cleared',
+    msgLoadedBackground: 'Background loaded: ',
+    msgImportSuccess: 'Imported: ',
+    msgImportFailedBackground: 'Background import failed: ',
+    msgImportFailed: 'Import failed: ',
+    msgFileFormatError: 'File format error',
+    unitSecond: 'sec'
+  }
+};
 
 function hasDetectedET(points: DataPoint[]): boolean {
   return points.some((p) => Number.isFinite(p.et) && p.et > ET_PRESENT_THRESHOLD);
@@ -871,6 +1163,12 @@ const App: React.FC = () => {
   const [exportFormat, setExportFormat] = useState<ExportFormat>('csv');
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
   const [isClearModalOpen, setIsClearModalOpen] = useState(false);
+  const [language, setLanguage] = useState<AppLanguage>(() => {
+    if (typeof window === 'undefined') return 'zh-CN';
+    const saved = window.localStorage.getItem('webartisan-language');
+    if (saved === 'zh-CN' || saved === 'en') return saved;
+    return window.navigator.language.toLowerCase().startsWith('zh') ? 'zh-CN' : 'en';
+  });
   const [samplingIntervalSeconds, setSamplingIntervalSeconds] = useState<number>(3);
   const [swapBtEt, setSwapBtEt] = useState(false);
   const [showBtRoR, setShowBtRoR] = useState(true);
@@ -879,6 +1177,14 @@ const App: React.FC = () => {
   // Mobile Event Panel State
   const [isMobileEventsExpanded, setIsMobileEventsExpanded] = useState(false);
   const [isCompactLandscape, setIsCompactLandscape] = useState(false);
+  const text = UI_TEXT[language];
+  const displayEventLabel = useCallback((label: string) => formatEventLabel(label, language), [language]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem('webartisan-language', language);
+    document.documentElement.lang = language;
+  }, [language]);
 
   useEffect(() => {
     const updateCompactLandscape = () => {
@@ -931,7 +1237,7 @@ const App: React.FC = () => {
      setIsSimulating(false);
      setDeviceName(null);
      setActiveService(null);
-     setErrorMsg("设备连接已断开");
+     setErrorMsg(text.msgDisconnected);
      setHasReceivedFirstData(false);
      
      // Reset values to 0 on disconnect
@@ -945,7 +1251,7 @@ const App: React.FC = () => {
      recentEtHistoryRef.current = [];
      smoothedRoRRef.current = { bt: 0, et: 0 };
      lastSensorUpdateRef.current = 0;
-  }, []);
+  }, [text.msgDisconnected]);
 
   const handleSwapBtEtChange = (enabled: boolean) => {
     setSwapBtEt(enabled);
@@ -971,9 +1277,9 @@ const App: React.FC = () => {
     setRawLogs([]);
     rawLogsRef.current = [];
 
-    const defaultIp = "请输入Roast32的IP地址";
+    const defaultIp = text.connectPromptDefault;
     const input = window.prompt(
-      "请输入设备 IP 地址（仅 IP）\n连接地址将固定为: ws://<IP>:80/ws",
+      text.connectPromptMessage,
       defaultIp
     );
 
@@ -984,7 +1290,7 @@ const App: React.FC = () => {
 
     const raw = input.trim();
     if (!raw) {
-        setErrorMsg("请输入设备 IP 地址");
+        setErrorMsg(text.msgEnterIp);
         setIsConnecting(false);
         return;
     }
@@ -997,7 +1303,7 @@ const App: React.FC = () => {
       .trim();
 
     if (!normalizedHost) {
-        setErrorMsg("无效的设备 IP 地址");
+        setErrorMsg(text.msgInvalidIp);
         setIsConnecting(false);
         return;
     }
@@ -1017,7 +1323,7 @@ const App: React.FC = () => {
         setActiveService('websocket');
         setStatus(RoastStatus.CONNECTED); 
     } catch (err: any) {
-        setErrorMsg(err.message || "WebSocket 连接失败");
+        setErrorMsg(err.message || text.msgWsConnectFailed);
     } finally {
         setIsConnecting(false);
     }
@@ -1025,7 +1331,7 @@ const App: React.FC = () => {
 
   const handleStartRoast = () => {
     if (status !== RoastStatus.CONNECTED || !activeService) {
-      setErrorMsg("请先连接设备，再开始烘焙");
+      setErrorMsg(text.msgConnectFirst);
       setTimeout(() => setErrorMsg(null), 2500);
       return;
     }
@@ -1147,7 +1453,7 @@ const App: React.FC = () => {
   // --- Export Logic ---
   const handleOpenExportModal = () => {
       if (data.length === 0) {
-          setErrorMsg("没有数据可导出");
+          setErrorMsg(text.msgNoDataToExport);
           setTimeout(() => setErrorMsg(null), 3000);
           return;
       }
@@ -1161,7 +1467,7 @@ const App: React.FC = () => {
   const handleConfirmExport = (e?: React.FormEvent) => {
       if (e) e.preventDefault();
       if (data.length === 0) {
-          setErrorMsg("没有数据可导出");
+          setErrorMsg(text.msgNoDataToExport);
           setTimeout(() => setErrorMsg(null), 3000);
           return;
       }
@@ -1201,7 +1507,7 @@ const App: React.FC = () => {
       link.click();
       document.body.removeChild(link);
       
-      setSuccessMsg(`导出成功：${finalName}`);
+      setSuccessMsg(`${text.msgExportSuccess}${finalName}`);
       setTimeout(() => setSuccessMsg(null), 3000);
   };
 
@@ -1215,7 +1521,7 @@ const App: React.FC = () => {
       const hasCurrent = data.length > 0 || events.length > 0 || status === RoastStatus.ROASTING || status === RoastStatus.FINISHED;
 
       if (!hasBackground && !hasCurrent) {
-          setErrorMsg("当前没有可清除的内容");
+          setErrorMsg(text.msgNoClearable);
           setTimeout(() => setErrorMsg(null), 2500);
           return;
       }
@@ -1228,17 +1534,17 @@ const App: React.FC = () => {
       setBackgroundEvents([]);
       if (backgroundInputRef.current) backgroundInputRef.current.value = "";
       setIsClearModalOpen(false);
-      setSuccessMsg("已清除背景曲线");
+      setSuccessMsg(text.msgClearedBackground);
       setTimeout(() => setSuccessMsg(null), 3000);
   };
 
   const handleClearCurrentCurve = async () => {
-      const confirmed = window.confirm("确认清除目前曲线吗？此操作不可撤销。");
+      const confirmed = window.confirm(text.msgClearCurrentConfirm);
       if (!confirmed) return;
 
       await handleReset();
       setIsClearModalOpen(false);
-      setSuccessMsg("已清除目前曲线");
+      setSuccessMsg(text.msgClearedCurrent);
       setTimeout(() => setSuccessMsg(null), 3000);
   };
 
@@ -1258,7 +1564,7 @@ const App: React.FC = () => {
               if (isBackground) {
                    setBackgroundData(parsedData);
                    setBackgroundEvents(parsedEvents);
-                   setSuccessMsg(`已加载背景曲线: ${file.name}`);
+                   setSuccessMsg(`${text.msgLoadedBackground}${file.name}`);
               } else {
                    // Standard Import Mode
                    // 1. Stop simulations if any
@@ -1284,12 +1590,12 @@ const App: React.FC = () => {
                        btRef.current = last.bt;
                        etRef.current = last.et;
                    }
-                   setSuccessMsg(`成功导入: ${file.name}`);
+                   setSuccessMsg(`${text.msgImportSuccess}${file.name}`);
               }
 
           } catch (err: any) {
               console.error("Import error", err);
-              setErrorMsg((isBackground ? "背景加载失败: " : "导入失败: ") + (err.message || "文件格式错误"));
+              setErrorMsg((isBackground ? text.msgImportFailedBackground : text.msgImportFailed) + (err.message || text.msgFileFormatError));
           } finally {
               // Reset inputs
               if (backgroundInputRef.current) backgroundInputRef.current.value = "";
@@ -1381,7 +1687,7 @@ const App: React.FC = () => {
         setIsSimulating(true);
         setActiveService('simulation');
         setStatus(RoastStatus.CONNECTED); // Start Connected
-        setDeviceName("模拟烘焙机 (Demo)");
+        setDeviceName(language === 'zh-CN' ? "模拟烘焙机 (Demo)" : "Simulation Roaster (Demo)");
         
         // Init physics vars
         let simBt = 150;
@@ -1481,7 +1787,8 @@ const App: React.FC = () => {
   const primaryMobileEventButtons = eventButtons.slice(0, 3);
   const secondaryMobileEventButtons = eventButtons.slice(3);
   const orderedEventLabels = ["入豆", "脱水结束", "一爆开始", "一爆结束", "二爆开始", "二爆结束"];
-  const nextEventHint = orderedEventLabels.find(label => !hasEvent(label)) || "流程完成";
+  const nextEventHintRaw = orderedEventLabels.find(label => !hasEvent(label));
+  const nextEventHint = nextEventHintRaw ? displayEventLabel(nextEventHintRaw) : text.done;
   const isDeviceConnected = activeService !== null;
   const hasBackgroundCurve = backgroundData.length > 0 || backgroundEvents.length > 0;
   const hasCurrentCurve = data.length > 0 || events.length > 0 || status === RoastStatus.ROASTING || status === RoastStatus.FINISHED;
@@ -1517,15 +1824,15 @@ const App: React.FC = () => {
   };
 
   const getStatusText = () => {
-      if (isConnecting) return '正在连接...';
-      if (isDeviceConnected) return '设备在线';
-      return '未连接';
+      if (isConnecting) return text.statusConnecting;
+      if (isDeviceConnected) return text.statusOnline;
+      return text.statusOffline;
   };
 
   const getModeText = () => {
-      if (activeService === 'websocket') return 'WebSocket';
-      if (activeService === 'simulation') return 'Simulation';
-      return '未知';
+      if (activeService === 'websocket') return text.modeWebSocket;
+      if (activeService === 'simulation') return text.modeSimulation;
+      return text.modeUnknown;
   };
 
   return (
@@ -1546,7 +1853,7 @@ const App: React.FC = () => {
             <div className="panel-surface border rounded-lg shadow-2xl w-full max-w-sm overflow-hidden">
                 <div className="px-4 py-3 border-b border-[#2f3944] flex justify-between items-center bg-[#252f3a]/80">
                     <span className="font-bold text-gray-200 flex items-center gap-2">
-                        <Download size={16} /> 导出记录
+                        <Download size={16} /> {text.exportRecord}
                     </span>
                     <button onClick={() => setIsExportModalOpen(false)} className="text-gray-500 hover:text-gray-300">
                         <X size={18} />
@@ -1554,7 +1861,7 @@ const App: React.FC = () => {
                 </div>
                 <form onSubmit={handleConfirmExport} className="p-4 flex flex-col gap-4">
                     <div>
-                        <label className="block text-xs font-bold text-gray-500 uppercase mb-1">文件名</label>
+                        <label className="block text-xs font-bold text-gray-500 uppercase mb-1">{text.fileName}</label>
                         <div className="flex items-center">
                             <input 
                                 type="text" 
@@ -1569,7 +1876,7 @@ const App: React.FC = () => {
                         </div>
                     </div>
                     <div>
-                        <label className="block text-xs font-bold text-gray-500 uppercase mb-1">导出格式</label>
+                        <label className="block text-xs font-bold text-gray-500 uppercase mb-1">{text.exportFormat}</label>
                         <select
                             value={exportFormat}
                             onChange={(e) => setExportFormat(e.target.value as ExportFormat)}
@@ -1588,13 +1895,13 @@ const App: React.FC = () => {
                             onClick={() => setIsExportModalOpen(false)}
                             className="toolbar-btn px-3 py-1.5 rounded text-sm font-bold text-gray-300"
                         >
-                            取消
+                            {text.cancel}
                         </button>
                         <button 
                             type="submit"
                             className="toolbar-btn toolbar-btn-primary px-4 py-1.5 rounded text-sm font-bold shadow-lg"
                         >
-                            确认导出
+                            {text.confirmExport}
                         </button>
                     </div>
                 </form>
@@ -1608,7 +1915,7 @@ const App: React.FC = () => {
           <div className="panel-surface border rounded-lg shadow-2xl w-full max-w-sm overflow-hidden">
             <div className="px-4 py-3 border-b border-[#2f3944] flex justify-between items-center bg-[#252f3a]/80">
               <span className="font-bold text-gray-200 flex items-center gap-2">
-                <Settings size={16} /> 设置
+                <Settings size={16} /> {text.settings}
               </span>
               <button onClick={() => setIsSettingsModalOpen(false)} className="text-gray-500 hover:text-gray-300">
                 <X size={18} />
@@ -1616,7 +1923,18 @@ const App: React.FC = () => {
             </div>
             <div className="p-4 flex flex-col gap-4">
               <div>
-                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">采样时间</label>
+                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">{text.language}</label>
+                <select
+                  value={language}
+                  onChange={(e) => setLanguage(e.target.value as AppLanguage)}
+                  className="w-full bg-[#111823] border border-[#3e4b5a] text-white px-3 py-2 text-sm rounded focus:outline-none focus:border-blue-500"
+                >
+                  <option value="zh-CN">{text.langZh}</option>
+                  <option value="en">{text.langEn}</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">{text.samplingInterval}</label>
                 <select
                   value={samplingIntervalSeconds}
                   onChange={(e) => setSamplingIntervalSeconds(Number(e.target.value))}
@@ -1624,14 +1942,14 @@ const App: React.FC = () => {
                 >
                   {[1, 2, 3, 4, 5].map((sec) => (
                     <option key={sec} value={sec}>
-                      {sec} 秒
+                      {sec} {text.unitSecond}
                     </option>
                   ))}
                 </select>
               </div>
 
               <label className="flex items-center justify-between rounded border border-[#31404f] bg-[#111823]/75 px-3 py-2 text-sm text-gray-200">
-                <span>BT / ET 温度互换</span>
+                <span>{text.swapBtEt}</span>
                 <input
                   type="checkbox"
                   checked={swapBtEt}
@@ -1641,7 +1959,7 @@ const App: React.FC = () => {
               </label>
 
               <label className="flex items-center justify-between rounded border border-[#31404f] bg-[#111823]/75 px-3 py-2 text-sm text-gray-200">
-                <span>显示 BT RoR</span>
+                <span>{text.showBtRoR}</span>
                 <input
                   type="checkbox"
                   checked={showBtRoR}
@@ -1651,7 +1969,7 @@ const App: React.FC = () => {
               </label>
 
               <label className="flex items-center justify-between rounded border border-[#31404f] bg-[#111823]/75 px-3 py-2 text-sm text-gray-200">
-                <span>显示 ET RoR</span>
+                <span>{text.showEtRoR}</span>
                 <input
                   type="checkbox"
                   checked={showEtRoR}
@@ -1666,7 +1984,7 @@ const App: React.FC = () => {
                   onClick={() => setIsSettingsModalOpen(false)}
                   className="toolbar-btn toolbar-btn-primary px-4 py-1.5 rounded text-sm font-bold shadow-lg"
                 >
-                  完成
+                  {text.done}
                 </button>
               </div>
             </div>
@@ -1680,7 +1998,7 @@ const App: React.FC = () => {
           <div className="panel-surface border rounded-lg shadow-2xl w-full max-w-sm overflow-hidden">
             <div className="px-4 py-3 border-b border-[#2f3944] flex justify-between items-center bg-[#252f3a]/80">
               <span className="font-bold text-gray-200 flex items-center gap-2">
-                <Trash2 size={16} /> 清除
+                <Trash2 size={16} /> {text.clear}
               </span>
               <button onClick={() => setIsClearModalOpen(false)} className="text-gray-500 hover:text-gray-300">
                 <X size={18} />
@@ -1693,7 +2011,7 @@ const App: React.FC = () => {
                 disabled={!hasBackgroundCurve}
                 className="toolbar-btn w-full px-3 py-2 rounded text-sm font-bold disabled:opacity-45 disabled:cursor-not-allowed"
               >
-                清除背景曲线
+                {text.clearBackgroundCurve}
               </button>
               <button
                 type="button"
@@ -1701,10 +2019,10 @@ const App: React.FC = () => {
                 disabled={!hasCurrentCurve}
                 className="toolbar-btn toolbar-btn-danger w-full px-3 py-2 rounded text-sm font-bold disabled:opacity-45 disabled:cursor-not-allowed"
               >
-                清除目前曲线
+                {text.clearCurrentCurve}
               </button>
               <div className="text-[11px] text-gray-400">
-                清除目前曲线会弹出二次确认。
+                {text.clearCurrentCurveHint}
               </div>
               <div className="flex justify-end pt-1">
                 <button
@@ -1712,7 +2030,7 @@ const App: React.FC = () => {
                   onClick={() => setIsClearModalOpen(false)}
                   className="toolbar-btn px-3 py-1.5 rounded text-sm font-bold text-gray-300"
                 >
-                  取消
+                  {text.cancel}
                 </button>
               </div>
             </div>
@@ -1735,46 +2053,46 @@ const App: React.FC = () => {
               <span className={`w-3 h-3 rounded-full transition-colors duration-300 ${getStatusColor()}`}></span>
               <span className="text-[#9fb0c2] transition-colors group-hover:text-white">{getStatusText()}</span>
 
-              {/* Tooltip Popup */}
-              <div className="absolute top-full left-0 mt-1 w-52 p-2.5 bg-[#0a1119]/95 backdrop-blur border border-[#425161] rounded shadow-xl opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50 text-[10px] text-gray-300 transform origin-top-left">
-                <div className="font-bold text-white mb-1 border-b border-[#2c3a48] pb-1 tracking-wider">系统状态</div>
-                  <div className="flex flex-col gap-1">
-                  <div>
-                    状态: <span className={isDeviceConnected ? 'text-green-400' : 'text-red-400'}>
-                      {isConnecting ? '初始化中...' : isDeviceConnected ? '已就绪' : '等待连接'}
-                    </span>
-                  </div>
-                  {isDeviceConnected && (
-                    <>
-                      <div>设备: {deviceName || '未知'}</div>
-                      <div>模式: {getModeText()}</div>
-                      <div className="flex items-center gap-1">信号: <Signal size={10} className="text-green-500"/> 强</div>
-                    </>
-                  )}
-                  {!isDeviceConnected && !isConnecting && (
-                    <div className="text-gray-500 italic">请点击右侧按钮连接设备</div>
-                  )}
-                </div>
-              </div>
+	              {/* Tooltip Popup */}
+	              <div className="absolute top-full left-0 mt-1 w-52 p-2.5 bg-[#0a1119]/95 backdrop-blur border border-[#425161] rounded shadow-xl opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50 text-[10px] text-gray-300 transform origin-top-left">
+	                <div className="font-bold text-white mb-1 border-b border-[#2c3a48] pb-1 tracking-wider">{text.systemStatus}</div>
+	                  <div className="flex flex-col gap-1">
+	                  <div>
+	                    {text.status}: <span className={isDeviceConnected ? 'text-green-400' : 'text-red-400'}>
+	                      {isConnecting ? text.initializing : isDeviceConnected ? text.ready : text.waitingConnection}
+	                    </span>
+	                  </div>
+	                  {isDeviceConnected && (
+	                    <>
+	                      <div>{text.device}: {deviceName || text.modeUnknown}</div>
+	                      <div>{text.mode}: {getModeText()}</div>
+		                      <div className="flex items-center gap-1">{text.signal}: <Signal size={10} className="text-green-500"/> {text.signalStrong}</div>
+	                    </>
+	                  )}
+	                  {!isDeviceConnected && !isConnecting && (
+	                    <div className="text-gray-500 italic">{text.pleaseConnectDevice}</div>
+	                  )}
+	                </div>
+	              </div>
             </div>
           </div>
 
           <div className="flex gap-2 items-center">
             {status === RoastStatus.ROASTING ? (
-              <button
-                onClick={handleStopRoast}
-                className="toolbar-btn toolbar-btn-danger shrink-0 px-3 md:px-4 py-1.5 rounded font-bold text-xs md:text-sm flex items-center gap-1 shadow-[0_0_10px_rgba(207,34,46,0.35)]"
-              >
-                <Square size={14} className="md:w-4 md:h-4" /> 下豆
-              </button>
-            ) : status === RoastStatus.FINISHED ? (
-              <button
-                onClick={handleReset}
-                className="toolbar-btn shrink-0 px-3 py-1.5 rounded font-bold text-xs md:text-sm flex items-center gap-1"
-              >
-                <RotateCcw size={14} className="md:w-4 md:h-4" /> 重置
-              </button>
-            ) : (
+	              <button
+	                onClick={handleStopRoast}
+	                className="toolbar-btn toolbar-btn-danger shrink-0 px-3 md:px-4 py-1.5 rounded font-bold text-xs md:text-sm flex items-center gap-1 shadow-[0_0_10px_rgba(207,34,46,0.35)]"
+	              >
+	                <Square size={14} className="md:w-4 md:h-4" /> {text.drop}
+	              </button>
+	            ) : status === RoastStatus.FINISHED ? (
+	              <button
+	                onClick={handleReset}
+	                className="toolbar-btn shrink-0 px-3 py-1.5 rounded font-bold text-xs md:text-sm flex items-center gap-1"
+	              >
+	                <RotateCcw size={14} className="md:w-4 md:h-4" /> {text.reset}
+	              </button>
+	            ) : (
               <button
                 onClick={handleStartRoast}
                 disabled={status !== RoastStatus.CONNECTED || isConnecting || !isDeviceConnected}
@@ -1783,50 +2101,50 @@ const App: React.FC = () => {
                     ? 'opacity-45 cursor-not-allowed shadow-none'
                     : 'shadow-[0_0_10px_rgba(45,164,78,0.35)]'
                 }`}
-                title={status === RoastStatus.CONNECTED ? "开始烘焙" : "连接设备后可开始"}
-              >
-                <Play size={14} className="md:w-4 md:h-4" /> 开始
-              </button>
-            )}
+	                title={status === RoastStatus.CONNECTED ? text.startRoastTitle : text.connectBeforeStartTitle}
+	              >
+	                <Play size={14} className="md:w-4 md:h-4" /> {text.start}
+	              </button>
+	            )}
 
-            <button onClick={handleOpenExportModal} className="toolbar-btn shrink-0 p-1.5 md:px-2 md:py-1.5 rounded flex items-center gap-1" title="导出记录">
-              <Download size={14} className="md:w-4 md:h-4" />
-              <span className="hidden md:inline text-xs">导出</span>
-            </button>
-            <button onClick={handleBackgroundClick} className="toolbar-btn shrink-0 p-1.5 md:px-2 md:py-1.5 rounded flex items-center gap-1 mr-1 md:mr-2" title="加载背景曲线 (跟随烘焙)">
-              <FileInput size={14} className="md:w-4 md:h-4" />
-              <span className="hidden md:inline text-xs">背景</span>
-            </button>
+	            <button onClick={handleOpenExportModal} className="toolbar-btn shrink-0 p-1.5 md:px-2 md:py-1.5 rounded flex items-center gap-1" title={text.exportRecord}>
+	              <Download size={14} className="md:w-4 md:h-4" />
+	              <span className="hidden md:inline text-xs">{text.export}</span>
+	            </button>
+	            <button onClick={handleBackgroundClick} className="toolbar-btn shrink-0 p-1.5 md:px-2 md:py-1.5 rounded flex items-center gap-1 mr-1 md:mr-2" title={text.loadBackgroundCurve}>
+	              <FileInput size={14} className="md:w-4 md:h-4" />
+	              <span className="hidden md:inline text-xs">{text.background}</span>
+	            </button>
             <button
               onClick={handleOpenClearModal}
               disabled={!hasAnyClearable}
               className="toolbar-btn shrink-0 p-1.5 md:px-2 md:py-1.5 rounded flex items-center gap-1 disabled:opacity-40 disabled:cursor-not-allowed disabled:transform-none"
-              title="清除选项"
-            >
-              <Trash2 size={14} className="md:w-4 md:h-4" />
-              <span className="hidden md:inline text-xs">清除</span>
-            </button>
-            <button onClick={() => setIsSettingsModalOpen(true)} className="toolbar-btn shrink-0 p-1.5 md:px-2 md:py-1.5 rounded flex items-center gap-1" title="设置">
-              <Settings size={14} className="md:w-4 md:h-4" />
-              <span className="hidden md:inline text-xs">设置</span>
-            </button>
+	              title={text.clearOptions}
+	            >
+	              <Trash2 size={14} className="md:w-4 md:h-4" />
+	              <span className="hidden md:inline text-xs">{text.clear}</span>
+	            </button>
+	            <button onClick={() => setIsSettingsModalOpen(true)} className="toolbar-btn shrink-0 p-1.5 md:px-2 md:py-1.5 rounded flex items-center gap-1" title={text.settings}>
+	              <Settings size={14} className="md:w-4 md:h-4" />
+	              <span className="hidden md:inline text-xs">{text.settings}</span>
+	            </button>
 
             {!isDeviceConnected && (
               <button
                 onClick={handleWebSocketConnect}
                 disabled={isConnecting}
                 className="toolbar-btn toolbar-btn-primary shrink-0 px-2 py-1.5 md:px-3 rounded font-bold text-xs md:text-sm flex items-center gap-1 disabled:opacity-40 disabled:cursor-not-allowed disabled:transform-none"
-                title="连接 Artisan WebSocket (WiFi)"
-              >
+	                title={text.connectWifiTitle}
+	              >
                 {isConnecting ? (
                   <Loader2 size={14} className="animate-spin md:w-4 md:h-4" />
                 ) : (
                   <Wifi size={14} className="md:w-4 md:h-4" />
                 )}
-                <span className="inline">{isConnecting ? '...' : 'WiFi'}</span>
-              </button>
-            )}
-          </div>
+	                <span className="inline">{isConnecting ? '...' : 'WiFi'}</span>
+	              </button>
+	            )}
+	          </div>
         </div>
 
         {/* Mobile Toolbar */}
@@ -1838,11 +2156,11 @@ const App: React.FC = () => {
                 <div className="text-[11px] font-semibold tracking-[0.1em] uppercase text-gray-200 truncate">
                   Web<span className="text-orange-400">Artisan</span>
                 </div>
-                <div className="text-[9px] text-[#8ea0b3] font-mono truncate">
-                  {!isDeviceConnected
-                    ? (data.length > 0 ? '回放模式（未连接设备）' : '设备未连接')
-                    : `${deviceName || '设备在线'} · ${getModeText()}`}
-                </div>
+	                <div className="text-[9px] text-[#8ea0b3] font-mono truncate">
+	                  {!isDeviceConnected
+	                    ? (data.length > 0 ? text.mobilePlaybackMode : text.mobileDeviceNotConnected)
+	                    : `${deviceName || text.statusOnline} · ${getModeText()}`}
+	                </div>
               </div>
               <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${getStatusColor()}`}></span>
             </div>
@@ -1850,18 +2168,18 @@ const App: React.FC = () => {
             {status === RoastStatus.ROASTING ? (
               <button
                 onClick={handleStopRoast}
-                className="toolbar-btn toolbar-btn-danger shrink-0 px-3 py-1.5 rounded font-bold text-xs flex items-center gap-1 shadow-[0_0_8px_rgba(207,34,46,0.35)]"
-              >
-                <Square size={13} /> 下豆
-              </button>
-            ) : status === RoastStatus.FINISHED ? (
+	                className="toolbar-btn toolbar-btn-danger shrink-0 px-3 py-1.5 rounded font-bold text-xs flex items-center gap-1 shadow-[0_0_8px_rgba(207,34,46,0.35)]"
+	              >
+	                <Square size={13} /> {text.drop}
+	              </button>
+	            ) : status === RoastStatus.FINISHED ? (
               <button
                 onClick={handleReset}
-                className="toolbar-btn shrink-0 px-3 py-1.5 rounded font-bold text-xs flex items-center gap-1"
-              >
-                <RotateCcw size={13} /> 重置
-              </button>
-            ) : (
+	                className="toolbar-btn shrink-0 px-3 py-1.5 rounded font-bold text-xs flex items-center gap-1"
+	              >
+	                <RotateCcw size={13} /> {text.reset}
+	              </button>
+	            ) : (
               <button
                 onClick={handleStartRoast}
                 disabled={status !== RoastStatus.CONNECTED || isConnecting || !isDeviceConnected}
@@ -1871,9 +2189,9 @@ const App: React.FC = () => {
                     : 'shadow-[0_0_8px_rgba(45,164,78,0.35)]'
                 }`}
               >
-                <Play size={13} /> 开始
-              </button>
-            )}
+	                <Play size={13} /> {text.start}
+	              </button>
+	            )}
           </div>
 
           {!isDeviceConnected ? (
@@ -1889,33 +2207,33 @@ const App: React.FC = () => {
             </div>
           ) : (
             <div className="px-2 py-1.5 rounded-md border border-[#31404f] bg-[#111823]/70 text-[10px] text-[#8ea0b3] font-mono flex items-center justify-between">
-              <span className="truncate max-w-[62%]">设备: {deviceName || '未知设备'}</span>
+              <span className="truncate max-w-[62%]">{text.device}: {deviceName || text.unknownDevice}</span>
               <span>{getStatusText()}</span>
             </div>
           )}
 
-          <div className="grid grid-cols-4 gap-1.5">
-            <button onClick={handleOpenExportModal} className="toolbar-btn py-1.5 rounded text-[11px] font-semibold flex items-center justify-center gap-1">
-              <Download size={12} /> 导出
-            </button>
-            <button onClick={handleBackgroundClick} className="toolbar-btn py-1.5 rounded text-[11px] font-semibold flex items-center justify-center gap-1">
-              <FileInput size={12} /> 背景
-            </button>
-            <button
-              onClick={handleOpenClearModal}
-              disabled={!hasAnyClearable}
-              className="toolbar-btn py-1.5 rounded text-[11px] font-semibold flex items-center justify-center gap-1 disabled:opacity-45 disabled:cursor-not-allowed"
-            >
-              <Trash2 size={12} /> 清除
-            </button>
-            <button onClick={() => setIsSettingsModalOpen(true)} className="toolbar-btn py-1.5 rounded text-[11px] font-semibold flex items-center justify-center gap-1">
-              <Settings size={12} /> 设置
-            </button>
-          </div>
-        </div>
-      </div>
+	          <div className="grid grid-cols-4 gap-1.5">
+	            <button onClick={handleOpenExportModal} className="toolbar-btn py-1.5 rounded text-[11px] font-semibold flex items-center justify-center gap-1">
+	              <Download size={12} /> {text.export}
+	            </button>
+	            <button onClick={handleBackgroundClick} className="toolbar-btn py-1.5 rounded text-[11px] font-semibold flex items-center justify-center gap-1">
+	              <FileInput size={12} /> {text.background}
+	            </button>
+	            <button
+	              onClick={handleOpenClearModal}
+	              disabled={!hasAnyClearable}
+	              className="toolbar-btn py-1.5 rounded text-[11px] font-semibold flex items-center justify-center gap-1 disabled:opacity-45 disabled:cursor-not-allowed"
+	            >
+	              <Trash2 size={12} /> {text.clear}
+	            </button>
+	            <button onClick={() => setIsSettingsModalOpen(true)} className="toolbar-btn py-1.5 rounded text-[11px] font-semibold flex items-center justify-center gap-1">
+	              <Settings size={12} /> {text.settings}
+	            </button>
+	          </div>
+	          </div>
+	        </div>
 
-      {/* NOTIFICATIONS */}
+	      {/* NOTIFICATIONS */}
       {errorMsg && (
         <div className="notice-error text-white px-4 py-2 text-xs md:text-sm flex items-center gap-2 animate-in fade-in slide-in-from-top-2">
             <AlertCircle size={14} /> {errorMsg}
@@ -1935,15 +2253,15 @@ const App: React.FC = () => {
             <div className="absolute top-4 left-1/2 -translate-x-1/2 z-50 animate-in slide-in-from-top-4 fade-in duration-300">
                 <div className="panel-surface border border-[#cf4f59] rounded-md shadow-2xl p-3 flex items-center gap-3">
                     <div className="flex flex-col">
-                        <span className="text-white font-bold text-sm">已下豆 (Roast Finished)</span>
-                        <span className="text-gray-400 text-xs">烘焙已完成。误操作？</span>
+                        <span className="text-white font-bold text-sm">{text.undoDropTitle}</span>
+                        <span className="text-gray-400 text-xs">{text.undoDropDesc}</span>
                     </div>
                     <div className="h-6 w-px bg-gray-600/80"></div>
                     <button 
                         onClick={handleUndoDrop}
                         className="toolbar-btn toolbar-btn-danger flex items-center gap-1 px-3 py-1.5 text-xs font-bold rounded"
                     >
-                        <Undo2 size={14} /> 撤销
+                        <Undo2 size={14} /> {text.undo}
                     </button>
                     <button 
                         onClick={() => setShowUndoDrop(false)}
@@ -1961,24 +2279,24 @@ const App: React.FC = () => {
             ${isCompactLandscape ? 'w-44 p-2 gap-1.5' : 'w-64 p-3 gap-2'}
             flex-col overflow-y-auto shrink-0 no-scrollbar
         `}>
-            <div className={`${isCompactLandscape ? 'mb-1.5 pb-1.5 text-[10px]' : 'mb-2 pb-2 text-[11px]'} border-b border-[#31404f] font-semibold text-[#8ea0b3] uppercase tracking-[0.15em]`}>实时温度</div>
-            <StatCard compact={isCompactLandscape} label="Bean Temp" value={currentBT.toFixed(1)} unit="°C" color="red" />
-            {hasLiveET && <StatCard compact={isCompactLandscape} label="Env Temp" value={currentET.toFixed(1)} unit="°C" color="blue" />}
+            <div className={`${isCompactLandscape ? 'mb-1.5 pb-1.5 text-[10px]' : 'mb-2 pb-2 text-[11px]'} border-b border-[#31404f] font-semibold text-[#8ea0b3] uppercase tracking-[0.15em]`}>{text.realtimeTemperature}</div>
+            <StatCard compact={isCompactLandscape} label={language === 'zh-CN' ? '豆温 BT' : 'Bean Temp'} value={currentBT.toFixed(1)} unit="°C" color="red" />
+            {hasLiveET && <StatCard compact={isCompactLandscape} label={language === 'zh-CN' ? '环境温 ET' : 'Env Temp'} value={currentET.toFixed(1)} unit="°C" color="blue" />}
             
             {hasAnyRoRDisplay && (
               <>
-                <div className={`${isCompactLandscape ? 'my-1.5 pb-1.5 text-[10px]' : 'my-2 pb-2 text-[11px]'} border-b border-[#31404f] font-semibold text-[#8ea0b3] uppercase tracking-[0.15em]`}>温升率</div>
+                <div className={`${isCompactLandscape ? 'my-1.5 pb-1.5 text-[10px]' : 'my-2 pb-2 text-[11px]'} border-b border-[#31404f] font-semibold text-[#8ea0b3] uppercase tracking-[0.15em]`}>{text.rateOfRise}</div>
                 {showBtRoR && <StatCard compact={isCompactLandscape} label="BT RoR" value={currentRoR.toFixed(1)} unit="°/min" color="yellow" />}
                 {showEtRoRSeries && <StatCard compact={isCompactLandscape} label="ET RoR" value={currentETRoR.toFixed(1)} unit="°/min" color="cyan" />}
               </>
             )}
             
-            <div className={`${isCompactLandscape ? 'my-1.5 pb-1.5 text-[10px]' : 'my-2 pb-2 text-[11px]'} border-b border-[#31404f] font-semibold text-[#8ea0b3] uppercase tracking-[0.15em]`}>时间</div>
-            <StatCard compact={isCompactLandscape} label="TIME" value={getDuration()} color="green" />
+            <div className={`${isCompactLandscape ? 'my-1.5 pb-1.5 text-[10px]' : 'my-2 pb-2 text-[11px]'} border-b border-[#31404f] font-semibold text-[#8ea0b3] uppercase tracking-[0.15em]`}>{text.time}</div>
+            <StatCard compact={isCompactLandscape} label={language === 'zh-CN' ? '时间' : 'TIME'} value={getDuration()} color="green" />
             {showDevelopmentRatio && (
               <StatCard
                 compact={isCompactLandscape}
-                label="发展率 DTR"
+                label={text.dtr}
                 value={developmentRatio.toFixed(1)}
                 unit="%"
                 color="cyan"
@@ -2020,7 +2338,7 @@ const App: React.FC = () => {
                  </div>
                )}
                <div className="rounded bg-[#0f151d]/70 border border-[#263444] flex flex-col items-center justify-center">
-                  <span className="text-[8px] text-gray-500 font-semibold uppercase tracking-wide">时间</span>
+                  <span className="text-[8px] text-gray-500 font-semibold uppercase tracking-wide">{text.time}</span>
                   <span className="text-[11px] font-mono font-bold text-[#4adf8f] leading-none">{getDuration()}</span>
                </div>
             </div>
@@ -2038,6 +2356,7 @@ const App: React.FC = () => {
                     showBackgroundET={hasBackgroundET}
                     showBtRoR={showBtRoR}
                     showEtRoR={showEtRoRSeries}
+                    language={language}
                     compactMode={isCompactLandscape}
                 />
             </div>
@@ -2054,16 +2373,16 @@ const App: React.FC = () => {
              {/* Mobile Event Layout: Primary events + expandable secondary events */}
              <div className="md:hidden flex flex-col gap-1.5 mb-safe-offset">
                  <div className="flex items-center justify-between px-0.5">
-                     <div className="text-[10px] font-semibold text-[#8ea0b3] uppercase tracking-[0.14em]">事件快捷</div>
+                     <div className="text-[10px] font-semibold text-[#8ea0b3] uppercase tracking-[0.14em]">{text.eventShortcuts}</div>
                      <div className="flex items-center gap-1.5">
                          <span className="text-[9px] text-[#6e8398] font-mono">
-                           {status === RoastStatus.ROASTING ? `下一步: ${nextEventHint}` : "待机"}
+                           {status === RoastStatus.ROASTING ? `${text.nextStep}: ${nextEventHint}` : text.idle}
                          </span>
                          <button
                            onClick={() => setIsMobileEventsExpanded(prev => !prev)}
                            className="toolbar-btn text-[9px] px-2 py-1 rounded text-gray-300"
                          >
-                           {isMobileEventsExpanded ? "收起事件" : "更多事件"}
+                           {isMobileEventsExpanded ? text.collapseEvents : text.moreEvents}
                          </button>
                      </div>
                  </div>
@@ -2087,7 +2406,7 @@ const App: React.FC = () => {
                                }
                              `}
                            >
-                             {btn.label}
+                             {displayEventLabel(btn.label)}
                            </button>
                          );
                      })}
@@ -2113,7 +2432,7 @@ const App: React.FC = () => {
                              }
                            `}
                          >
-                           {btn.label}
+                           {displayEventLabel(btn.label)}
                          </button>
                        );
                      })}
@@ -2121,7 +2440,7 @@ const App: React.FC = () => {
                  )}
              </div>
 
-             <div className={`hidden md:block ${isCompactLandscape ? 'text-[10px] mb-0.5' : 'text-[11px] mb-1'} font-semibold text-[#8ea0b3] uppercase tracking-[0.15em] text-center`}>事件标记</div>
+             <div className={`hidden md:block ${isCompactLandscape ? 'text-[10px] mb-0.5' : 'text-[11px] mb-1'} font-semibold text-[#8ea0b3] uppercase tracking-[0.15em] text-center`}>{text.eventMarkers}</div>
              <div className={isCompactLandscape ? 'hidden md:grid md:grid-cols-2 gap-1.5' : 'hidden md:flex md:flex-col gap-2'}>
                  {eventButtons.map((btn) => {
                      const isActive = hasEvent(btn.label);
@@ -2141,7 +2460,7 @@ const App: React.FC = () => {
                            }
                          `}
                        >
-                         {btn.label}
+                         {displayEventLabel(btn.label)}
                        </button>
                      );
                  })}
@@ -2152,14 +2471,14 @@ const App: React.FC = () => {
                  <div className="text-[10px] font-semibold text-[#7d8ea0] uppercase tracking-[0.12em] flex items-center justify-between px-1">
                     <span className="flex items-center gap-2">
                         {showRawLog ? <Bug size={10} className="text-orange-400" /> : <Terminal size={10} />}
-                        {showRawLog ? "原始数据 (RAW)" : "事件日志 (LOG)"}
+                        {showRawLog ? text.rawData : text.eventLog}
                     </span>
                     <button 
                         onClick={() => setShowRawLog(!showRawLog)} 
                         className="toolbar-btn text-[9px] px-1.5 py-0.5 rounded text-gray-300"
-                        title="切换视图"
+                        title={text.toggleView}
                     >
-                        {showRawLog ? "查看事件" : "查看数据"}
+                        {showRawLog ? text.viewEvents : text.viewData}
                     </button>
                  </div>
                  
@@ -2170,7 +2489,7 @@ const App: React.FC = () => {
                         <>
                         {events.length === 0 && (
                             <div className="absolute inset-0 flex items-center justify-center text-[#3d4b5a] text-[10px] italic">
-                                等待记录...
+                                {text.waitingRecord}
                             </div>
                         )}
                         <div className="flex flex-col">
@@ -2178,7 +2497,7 @@ const App: React.FC = () => {
                                 <div key={i} className="flex items-center justify-between p-2 border-b border-[#1a2530] hover:bg-[#122030] transition-colors group">
                                     <div className="flex flex-col">
                                         <span className="text-[#dde7f1] font-semibold text-[10px] group-hover:text-white transition-colors">
-                                            {e.label}
+                                            {displayEventLabel(e.label)}
                                         </span>
                                         <span className="text-[#5f7183] text-[9px] group-hover:text-[#8ca0b4] transition-colors font-mono">
                                             @ {e.temp.toFixed(1)}°C
@@ -2197,7 +2516,7 @@ const App: React.FC = () => {
                     {showRawLog && (
                         <div className="flex flex-col p-2 font-mono text-[10px] text-[#9badbf]">
                              {rawLogs.length === 0 && (
-                                <div className="text-center italic text-[#3d4b5a] mt-10">暂无数据...<br/>请连接设备</div>
+                                <div className="text-center italic text-[#3d4b5a] mt-10">{text.noDataHint}<br/>{text.noDataConnectHint}</div>
                             )}
                             {rawLogs.map((log, i) => (
                                 <div key={i} className="border-b border-[#1a2530] py-0.5 break-all">

@@ -63,6 +63,20 @@
         font-display: swap;
         src: url('/fonts/space-grotesk-700.ttf') format('truetype');
       }
+      @font-face {
+        font-family: 'Noto Sans CJK SC Local';
+        font-style: normal;
+        font-weight: 400;
+        font-display: swap;
+        src: url('/fonts/noto-sans-cjk-sc-400.otf') format('opentype');
+      }
+      @font-face {
+        font-family: 'Noto Sans CJK SC Local';
+        font-style: normal;
+        font-weight: 700;
+        font-display: swap;
+        src: url('/fonts/noto-sans-cjk-sc-700.otf') format('opentype');
+      }
       :root {
         --bg-deep: #0f1318;
         --bg-mid: #151b22;
@@ -83,7 +97,7 @@
       }
       body {
         margin: 0;
-        font-family: 'Space Grotesk', 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+        font-family: 'Space Grotesk', 'Noto Sans CJK SC Local';
         color: var(--text-main);
         overflow: hidden;
         touch-action: manipulation;
@@ -93,7 +107,7 @@
           linear-gradient(160deg, var(--bg-mid) 0%, var(--bg-deep) 100%);
       }
       .font-mono {
-        font-family: 'JetBrains Mono', monospace;
+        font-family: 'JetBrains Mono';
       }
       .app-shell {
         position: relative;
