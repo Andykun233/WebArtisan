@@ -179,12 +179,13 @@ function convertPythonLiteralToJson(literal: string): string {
 
 function parseRoastObject(content: string, fileName: string): any {
   const text = content.trim();
+  const lowerFileName = fileName.toLowerCase();
 
   try {
     return JSON.parse(text);
   } catch (jsonErr) {
     // Artisan ALOG can be Python-literal-like dict text (single quotes + True/False)
-    if (fileName.endsWith(".alog")) {
+    if (lowerFileName.endsWith(".alog") || lowerFileName.endsWith(".txt")) {
       try {
         const converted = convertPythonLiteralToJson(text);
         return JSON.parse(converted);
@@ -229,8 +230,9 @@ function recalculateRoR(data: DataPoint[]): DataPoint[] {
 const parseRoastLog = (content: string, fileName: string): { data: DataPoint[], events: RoastEvent[] } => {
     let parsedData: DataPoint[] = [];
     let parsedEvents: RoastEvent[] = [];
+    const lowerFileName = fileName.toLowerCase();
 
-    if (fileName.endsWith('.json') || fileName.endsWith('.alog')) {
+    if (lowerFileName.endsWith('.json') || lowerFileName.endsWith('.alog') || lowerFileName.endsWith('.txt')) {
         // JSON / ALOG Parsing
         const json = parseRoastObject(content, fileName);
         // Custom roaster-app JSON support: { dataList: [...], eventList: [...] }
@@ -381,7 +383,7 @@ const parseRoastLog = (content: string, fileName: string): { data: DataPoint[], 
             }
         }
 
-    } else if (fileName.endsWith('.csv')) {
+    } else if (lowerFileName.endsWith('.csv')) {
         // CSV Parsing
         const lines = content.split(/\r?\n/);
         
@@ -1535,7 +1537,7 @@ const App: React.FC = () => {
         ref={backgroundInputRef} 
         onChange={handleBackgroundFile} 
         className="hidden" 
-        accept=".json,.alog,.csv"
+        accept=".json,.alog,.csv,.txt,text/plain,text/csv,application/json,*/*"
       />
 
       {/* EXPORT MODAL */}
