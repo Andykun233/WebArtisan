@@ -6,6 +6,7 @@ WebArtisan 是一个面向咖啡烘焙的实时曲线面板（前端单页应用
 - 仅保留 `WiFi(WebSocket)` 连接方式（已移除 BLE / 串口 / SPP UI）。
 - 支持导入背景曲线、实时 BT/ET/RoR 图表、事件打点、DTR（发展率）显示。
 - 支持导出 `ALOG / CSV / JSON` 三种格式。
+- 支持界面语言切换（`简体中文 / English`），并自动本地记忆语言设置。
 - 支持 iOS/移动端的 PWA 安装与离线壳缓存（需满足 HTTPS 条件，见下文）。
 
 ## 功能一览
@@ -29,12 +30,15 @@ WebArtisan 是一个面向咖啡烘焙的实时曲线面板（前端单页应用
 - BT/ET 温度互换
 - 显示/隐藏 BT RoR
 - 显示/隐藏 ET RoR
+- 语言切换：`简体中文 / English`（保存在浏览器本地）
 
 ### 曲线导入与导出
 
 - 导入支持：`.json` / `.alog` / `.csv`
 - 导出可选：`.alog` / `.csv` / `.json`
-- 支持“清除背景曲线”按钮
+- “清除”按钮支持二级操作：
+  - 清除背景曲线
+  - 清除目前曲线（带二次确认）
 
 ## 技术栈
 
@@ -113,9 +117,19 @@ ws://192.168.1.159:80/ws
 
 ### 导入格式
 
-- `.json` / `.alog` / `.csv`
+- `.json` / `.alog` / `.csv` / `.txt`（兼容 iOS 上部分文件类型映射场景）
 - 支持多种常见 Artisan 字段命名（如 `timex/temp1/temp2`、`dataList/eventList` 等）
+- 后缀匹配不区分大小写（如 `.ALOG` 也可解析）
 - 导入后会重新计算 RoR 以统一显示效果
+
+## 字体与本地化
+
+- 所有界面字体均从本地静态文件加载，不依赖在线字体服务
+- 已本地化字体：
+  - `Space Grotesk`（英文 UI）
+  - `JetBrains Mono`（数值与等宽信息）
+  - `Noto Sans CJK SC`（中文 UI）
+- 语言切换覆盖主界面、设置、弹窗、提示文案和图表图例/标签
 
 ## PWA 与离线说明
 
@@ -224,6 +238,15 @@ location /ws/ {
 │   ├── manifest.webmanifest
 │   ├── offline.html
 │   ├── fonts/
+│   │   ├── jetbrains-mono-400.ttf
+│   │   ├── jetbrains-mono-600.ttf
+│   │   ├── jetbrains-mono-700.ttf
+│   │   ├── space-grotesk-400.ttf
+│   │   ├── space-grotesk-500.ttf
+│   │   ├── space-grotesk-600.ttf
+│   │   ├── space-grotesk-700.ttf
+│   │   ├── noto-sans-cjk-sc-400.otf
+│   │   └── noto-sans-cjk-sc-700.otf
 │   └── icons/
 ├── index.tsx
 ├── index.html
@@ -235,5 +258,6 @@ location /ws/ {
 
 - 已移除 Google Gemini 相关服务集成（当前代码库无 Gemini 依赖）
 - 字体与静态资源均为本地文件，不依赖外链字体 CDN
-- 字体已本地化，位于 `public/fonts/`
+- 语言切换配置与文案在 `App.tsx` 中维护，图表文案在 `components/RoastChart.tsx` 中维护
+- 字体文件位于 `public/fonts/`
 - 如需扩展硬件协议，优先修改：`services/websocketService.ts`
