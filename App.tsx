@@ -218,7 +218,7 @@ const UI_TEXT: Record<AppLanguage, {
     signalStrong: '强',
     pleaseConnectDevice: '请点击右侧按钮连接设备',
     connectPromptDefault: '请输入Roast32的IP地址',
-    connectPromptMessage: '请输入设备 IP（可选完整 ws/wss 地址）\n默认连接: wss://<IP>:80/ws',
+    connectPromptMessage: '请输入设备 IP（可选完整 ws/wss 地址）\n默认连接: wss://<IP>:443/ws',
     start: '开始',
     drop: '下豆',
     reset: '重置',
@@ -308,7 +308,7 @@ const UI_TEXT: Record<AppLanguage, {
     signalStrong: 'Strong',
     pleaseConnectDevice: 'Use the button on the right to connect the device',
     connectPromptDefault: 'Enter Roast32 IP address',
-    connectPromptMessage: 'Enter device IP (or full ws/wss URL)\nDefault connection: wss://<IP>:80/ws',
+    connectPromptMessage: 'Enter device IP (or full ws/wss URL)\nDefault connection: wss://<IP>:443/ws',
     start: 'Start',
     drop: 'Drop',
     reset: 'Reset',
@@ -1296,7 +1296,7 @@ const App: React.FC = () => {
     }
 
     // Accept full ws:// or wss:// URLs directly.
-    // For host/IP-only input, default to wss://<host>:80/ws.
+    // For host/IP-only input, default to wss://<host>:443/ws.
     const hasScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(raw);
     const isWsScheme = /^wss?:\/\//i.test(raw);
 
@@ -1318,7 +1318,7 @@ const App: React.FC = () => {
         return;
     }
 
-    const url = isWsScheme ? raw : `wss://${normalizedHost}:80/ws`;
+    const url = isWsScheme ? raw : `wss://${normalizedHost}:443/ws`;
 
     try {
         setErrorMsg(null);
