@@ -218,7 +218,7 @@ const UI_TEXT: Record<AppLanguage, {
     signalStrong: '强',
     pleaseConnectDevice: '请点击右侧按钮连接设备',
     connectPromptDefault: '请输入Roast32的IP地址',
-    connectPromptMessage: '请输入设备 IP（可选完整 ws/wss 地址）\n默认连接: wss://<IP>:80/ws',
+    connectPromptMessage: '请输入设备 IP 地址（仅 IP）\n连接地址将固定为: ws://<IP>:80/ws',
     start: '开始',
     drop: '下豆',
     reset: '重置',
@@ -260,8 +260,8 @@ const UI_TEXT: Record<AppLanguage, {
     noDataHint: '暂无数据...',
     noDataConnectHint: '请连接设备',
     msgDisconnected: '设备连接已断开',
-    msgEnterIp: '请输入设备 IP 或完整 WebSocket 地址',
-    msgInvalidIp: '无效的 WebSocket 地址',
+    msgEnterIp: '请输入设备 IP 地址',
+    msgInvalidIp: '无效的设备 IP 地址',
     msgWsConnectFailed: 'WebSocket 连接失败',
     msgConnectFirst: '请先连接设备，再开始烘焙',
     msgNoDataToExport: '没有数据可导出',
@@ -308,7 +308,7 @@ const UI_TEXT: Record<AppLanguage, {
     signalStrong: 'Strong',
     pleaseConnectDevice: 'Use the button on the right to connect the device',
     connectPromptDefault: 'Enter Roast32 IP address',
-    connectPromptMessage: 'Enter device IP (or full ws/wss URL)\nDefault connection: wss://<IP>:80/ws',
+    connectPromptMessage: 'Enter device IP only\nConnection is fixed to: ws://<IP>:80/ws',
     start: 'Start',
     drop: 'Drop',
     reset: 'Reset',
@@ -350,8 +350,8 @@ const UI_TEXT: Record<AppLanguage, {
     noDataHint: 'No data yet...',
     noDataConnectHint: 'Connect a device',
     msgDisconnected: 'Device disconnected',
-    msgEnterIp: 'Please enter device IP or full WebSocket URL',
-    msgInvalidIp: 'Invalid WebSocket URL',
+    msgEnterIp: 'Please enter device IP',
+    msgInvalidIp: 'Invalid device IP',
     msgWsConnectFailed: 'WebSocket connection failed',
     msgConnectFirst: 'Connect device before starting roast',
     msgNoDataToExport: 'No data to export',
@@ -1295,17 +1295,7 @@ const App: React.FC = () => {
         return;
     }
 
-    // Accept full ws:// or wss:// URLs directly.
-    // For host/IP-only input, default to wss://<host>:80/ws.
-    const hasScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(raw);
-    const isWsScheme = /^wss?:\/\//i.test(raw);
-
-    if (hasScheme && !isWsScheme) {
-        setErrorMsg(text.msgInvalidIp);
-        setIsConnecting(false);
-        return;
-    }
-
+    // Allow pasting ws://... and normalize to fixed ws://<host>:80/ws
     const normalizedHost = raw
       .replace(/^wss?:\/\//i, '')
       .split('/')[0]
@@ -1318,7 +1308,7 @@ const App: React.FC = () => {
         return;
     }
 
-    const url = isWsScheme ? raw : `wss://${normalizedHost}:80/ws`;
+    const url = `ws://${normalizedHost}:80/ws`;
 
     try {
         setErrorMsg(null);
