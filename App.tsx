@@ -1175,7 +1175,6 @@ const App: React.FC = () => {
   const [showEtRoR, setShowEtRoR] = useState(true);
   
   // Mobile Event Panel State
-  const [isMobileEventsExpanded, setIsMobileEventsExpanded] = useState(false);
   const [isCompactLandscape, setIsCompactLandscape] = useState(false);
   const text = UI_TEXT[language];
   const displayEventLabel = useCallback((label: string) => formatEventLabel(label, language), [language]);
@@ -2370,21 +2369,13 @@ const App: React.FC = () => {
             pb-safe md:pb-2 z-20
             ${isCompactLandscape ? 'overflow-y-auto no-scrollbar' : ''}
         `}>
-             {/* Mobile Event Layout: Primary events + expandable secondary events */}
+             {/* Mobile Event Layout: always show all event shortcuts */}
              <div className="md:hidden flex flex-col gap-1.5 mb-safe-offset">
                  <div className="flex items-center justify-between px-0.5">
                      <div className="text-[10px] font-semibold text-[#8ea0b3] uppercase tracking-[0.14em]">{text.eventShortcuts}</div>
-                     <div className="flex items-center gap-1.5">
-                         <span className="text-[9px] text-[#6e8398] font-mono">
-                           {status === RoastStatus.ROASTING ? `${text.nextStep}: ${nextEventHint}` : text.idle}
-                         </span>
-                         <button
-                           onClick={() => setIsMobileEventsExpanded(prev => !prev)}
-                           className="toolbar-btn text-[9px] px-2 py-1 rounded text-gray-300"
-                         >
-                           {isMobileEventsExpanded ? text.collapseEvents : text.moreEvents}
-                         </button>
-                     </div>
+                     <span className="text-[9px] text-[#6e8398] font-mono">
+                       {status === RoastStatus.ROASTING ? `${text.nextStep}: ${nextEventHint}` : text.idle}
+                     </span>
                  </div>
 
                  <div className="grid grid-cols-3 gap-1.5">
@@ -2412,32 +2403,30 @@ const App: React.FC = () => {
                      })}
                  </div>
 
-                 {isMobileEventsExpanded && (
-                   <div className="grid grid-cols-3 gap-1.5 pt-0.5">
-                     {secondaryMobileEventButtons.map((btn) => {
-                       const isActive = hasEvent(btn.label);
+                 <div className="grid grid-cols-3 gap-1.5 pt-0.5">
+                   {secondaryMobileEventButtons.map((btn) => {
+                     const isActive = hasEvent(btn.label);
 
-                       return (
-                         <button
-                           key={`${btn.label}-mobile-secondary`}
-                           onClick={btn.action}
-                           disabled={status !== RoastStatus.ROASTING || btn.disabled}
-                           className={`
-                             w-full py-2.5 font-semibold text-[10px] rounded-md transition-all border select-none active:scale-95 touch-manipulation tracking-wide
-                             ${status !== RoastStatus.ROASTING || btn.disabled
-                               ? 'bg-[#262e37] text-[#5d6a79] border-[#2e3844] shadow-none'
-                               : isActive
-                                 ? `${btn.bgClass} text-white border-transparent shadow-[inset_0_1px_0_rgba(255,255,255,0.2),0_8px_14px_rgba(0,0,0,0.25)]`
-                                 : `bg-[#1a2129]/70 ${btn.borderClass} hover:bg-[#23303d] active:bg-[#2a3644]`
-                             }
-                           `}
-                         >
-                           {displayEventLabel(btn.label)}
-                         </button>
-                       );
-                     })}
-                   </div>
-                 )}
+                     return (
+                       <button
+                         key={`${btn.label}-mobile-secondary`}
+                         onClick={btn.action}
+                         disabled={status !== RoastStatus.ROASTING || btn.disabled}
+                         className={`
+                           w-full py-2.5 font-semibold text-[10px] rounded-md transition-all border select-none active:scale-95 touch-manipulation tracking-wide
+                           ${status !== RoastStatus.ROASTING || btn.disabled
+                             ? 'bg-[#262e37] text-[#5d6a79] border-[#2e3844] shadow-none'
+                             : isActive
+                               ? `${btn.bgClass} text-white border-transparent shadow-[inset_0_1px_0_rgba(255,255,255,0.2),0_8px_14px_rgba(0,0,0,0.25)]`
+                               : `bg-[#1a2129]/70 ${btn.borderClass} hover:bg-[#23303d] active:bg-[#2a3644]`
+                           }
+                         `}
+                       >
+                         {displayEventLabel(btn.label)}
+                       </button>
+                     );
+                   })}
+                 </div>
              </div>
 
              <div className={`hidden md:block ${isCompactLandscape ? 'text-[10px] mb-0.5' : 'text-[11px] mb-1'} font-semibold text-[#8ea0b3] uppercase tracking-[0.15em] text-center`}>{text.eventMarkers}</div>
