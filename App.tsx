@@ -1420,13 +1420,6 @@ const App: React.FC = () => {
       }
   }, []);
 
-  // Keep mobile event panel compact outside roasting mode
-  useEffect(() => {
-    if (status !== RoastStatus.ROASTING) {
-      setIsMobileEventsExpanded(false);
-    }
-  }, [status]);
-
   const handleEvent = (label: string) => {
     if (status !== RoastStatus.ROASTING || !startTime) return;
     const time = Math.max(0, (Date.now() - startTime) / 1000);
