@@ -85,10 +85,15 @@ const RoastChart: React.FC<RoastChartProps> = ({
   const hasDetectedBackgroundET = backgroundData.some((d) => Number.isFinite(d.et) && d.et > ET_PRESENT_THRESHOLD);
   const hasLiveET = showLiveET ?? hasDetectedLiveET;
   const hasBackgroundET = showBackgroundET ?? hasDetectedBackgroundET;
+  const hasLiveData = data.length > 0;
   const displayBtRoR = showBtRoR ?? true;
   const hasDetectedEtRoR = data.some((d) => Number.isFinite(d.et_ror ?? NaN));
   const displayEtRoR = (showEtRoR ?? true) && hasLiveET && hasDetectedEtRoR;
   const displayAnyRoR = displayBtRoR || displayEtRoR;
+  const showLiveBtSeries = hasLiveData;
+  const showLiveEtSeries = hasLiveData && hasLiveET;
+  const showLiveBtRoRSeries = hasLiveData && displayBtRoR;
+  const showLiveEtRoRSeries = hasLiveData && displayEtRoR;
 
   const tempPoints = [
     ...data.map((d) => d.bt),
@@ -352,20 +357,22 @@ const RoastChart: React.FC<RoastChartProps> = ({
           )}
 
           {/* Main Data Lines */}
-          <Line 
-            type="monotone" 
-            dataKey="bt" 
-            stroke="#ff6b6b" 
-            strokeWidth={2} 
-            dot={false} 
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            yAxisId="left" 
-            name={btLineName} 
-            isAnimationActive={false} 
-          />
+          {showLiveBtSeries && (
+            <Line 
+              type="monotone" 
+              dataKey="bt" 
+              stroke="#ff6b6b" 
+              strokeWidth={2} 
+              dot={false} 
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              yAxisId="left" 
+              name={btLineName} 
+              isAnimationActive={false} 
+            />
+          )}
           
-          {hasLiveET && (
+          {showLiveEtSeries && (
             <Line 
                 type="monotone" 
                 dataKey="et" 
@@ -380,7 +387,7 @@ const RoastChart: React.FC<RoastChartProps> = ({
             />
           )}
 
-          {displayBtRoR && (
+          {showLiveBtRoRSeries && (
             <Line 
               type="monotone" 
               dataKey="ror" 
@@ -396,7 +403,7 @@ const RoastChart: React.FC<RoastChartProps> = ({
             />
           )}
 
-          {displayEtRoR && (
+          {showLiveEtRoRSeries && (
             <Line
               type="monotone"
               dataKey="et_ror"
