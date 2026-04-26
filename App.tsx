@@ -1,9 +1,10 @@
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Play, Square, Thermometer, AlertCircle, Terminal, RotateCcw, Loader2, Signal, Undo2, X, Download, FileInput, Bug, Wifi, Settings, Trash2 } from 'lucide-react';
+import { Play, Square, Thermometer, AlertCircle, Terminal, RotateCcw, Loader2, Signal, Undo2, X, Download, FileInput, Bug, Wifi, Settings, Trash2, Sparkles } from 'lucide-react';
 import RoastChart from './components/RoastChart';
 import StatCard from './components/StatCard';
 import { WebSocketService } from './services/websocketService';
+import { requestRoastPrediction, type RoastPredictionResult } from './services/roastPredictionService';
 import { DataPoint, RoastStatus, RoastEvent } from './types';
 
 const websocketService = new WebSocketService();
@@ -78,6 +79,16 @@ function normalizeRoR(value: number): number {
 const ET_PRESENT_THRESHOLD = 1.0;
 type AppLanguage = 'zh-CN' | 'en';
 
+function readViteEnvString(key: string): string {
+  const env = import.meta.env as Record<string, unknown>;
+  const value = env[key];
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+const DEFAULT_AI_PREDICT_API_URL = readViteEnvString('VITE_ROAST_PREDICT_API_URL');
+const DEFAULT_AI_PREDICT_MODEL = readViteEnvString('VITE_ROAST_PREDICT_MODEL') || 'gpt-4.1-mini';
+const DEFAULT_AI_PREDICT_API_KEY = readViteEnvString('VITE_ROAST_PREDICT_API_KEY');
+
 const EVENT_LABEL_TRANSLATIONS: Record<string, { 'zh-CN': string; en: string }> = {
   '预热': { 'zh-CN': '预热', en: 'Preheat' },
   '开始': { 'zh-CN': '开始', en: 'Start' },
@@ -108,6 +119,7 @@ const UI_TEXT: Record<AppLanguage, {
   swapBtEt: string;
   showBtRoR: string;
   showEtRoR: string;
+  enableAiPredict: string;
   exportRecord: string;
   fileName: string;
   exportFormat: string;
@@ -185,6 +197,26 @@ const UI_TEXT: Record<AppLanguage, {
   msgImportFailedBackground: string;
   msgImportFailed: string;
   msgFileFormatError: string;
+  aiPredict: string;
+  aiPredictTitle: string;
+  aiEndpoint: string;
+  aiModel: string;
+  aiApiKey: string;
+  aiPredictHint: string;
+  aiPredicting: string;
+  aiPredictNow: string;
+  aiPredictionResult: string;
+  aiNoPredictionYet: string;
+  aiTargetDropTemp: string;
+  aiTargetDropTime: string;
+  aiConfidence: string;
+  aiReasoning: string;
+  aiRecommendations: string;
+  aiBetaRiskWarning: string;
+  msgAiFeatureDisabled: string;
+  msgNoDataForPrediction: string;
+  msgAiPredictSuccess: string;
+  msgAiPredictFailed: string;
   unitSecond: string;
 }> = {
   'zh-CN': {
@@ -198,6 +230,7 @@ const UI_TEXT: Record<AppLanguage, {
     swapBtEt: 'BT / ET 温度互换',
     showBtRoR: '显示 BT RoR',
     showEtRoR: '显示 ET RoR',
+    enableAiPredict: '启用 AI 预测（Beta）',
     exportRecord: '导出记录',
     fileName: '文件名',
     exportFormat: '导出格式',
@@ -275,6 +308,26 @@ const UI_TEXT: Record<AppLanguage, {
     msgImportFailedBackground: '背景加载失败: ',
     msgImportFailed: '导入失败: ',
     msgFileFormatError: '文件格式错误',
+    aiPredict: 'AI预测',
+    aiPredictTitle: 'AI烘焙预测',
+    aiEndpoint: '接口地址',
+    aiModel: '模型名称',
+    aiApiKey: 'API Key',
+    aiPredictHint: '配置你的模型推理接口后，即可基于当前曲线获得下豆建议。',
+    aiPredicting: '预测中...',
+    aiPredictNow: '开始预测',
+    aiPredictionResult: '预测结果',
+    aiNoPredictionYet: '还没有预测结果，点击“开始预测”即可生成。',
+    aiTargetDropTemp: '建议下豆温度',
+    aiTargetDropTime: '建议下豆时间',
+    aiConfidence: '置信度',
+    aiReasoning: '分析说明',
+    aiRecommendations: '操作建议',
+    aiBetaRiskWarning: '此AI预测功能属于Beta功能，本地模型正在收集烘焙数据学习中，点击确认接受风险，否则请点取消',
+    msgAiFeatureDisabled: '请先在设置中启用 AI 预测（Beta）',
+    msgNoDataForPrediction: '当前数据不足，无法进行 AI 预测',
+    msgAiPredictSuccess: 'AI 预测已更新',
+    msgAiPredictFailed: 'AI 预测失败',
     unitSecond: '秒'
   },
   en: {
@@ -288,6 +341,7 @@ const UI_TEXT: Record<AppLanguage, {
     swapBtEt: 'Swap BT / ET',
     showBtRoR: 'Show BT RoR',
     showEtRoR: 'Show ET RoR',
+    enableAiPredict: 'Enable AI Predict (Beta)',
     exportRecord: 'Export Roast',
     fileName: 'File Name',
     exportFormat: 'Export Format',
@@ -365,6 +419,26 @@ const UI_TEXT: Record<AppLanguage, {
     msgImportFailedBackground: 'Background import failed: ',
     msgImportFailed: 'Import failed: ',
     msgFileFormatError: 'File format error',
+    aiPredict: 'AI Predict',
+    aiPredictTitle: 'AI Roast Prediction',
+    aiEndpoint: 'Endpoint URL',
+    aiModel: 'Model',
+    aiApiKey: 'API Key',
+    aiPredictHint: 'Configure your model endpoint to get drop-time suggestions from the current roast curve.',
+    aiPredicting: 'Predicting...',
+    aiPredictNow: 'Run Prediction',
+    aiPredictionResult: 'Prediction',
+    aiNoPredictionYet: 'No prediction yet. Click \"Run Prediction\" to generate one.',
+    aiTargetDropTemp: 'Target Drop Temp',
+    aiTargetDropTime: 'Target Drop Time',
+    aiConfidence: 'Confidence',
+    aiReasoning: 'Reasoning',
+    aiRecommendations: 'Recommendations',
+    aiBetaRiskWarning: 'This AI prediction is a Beta feature. Your local model is learning from roast data. Click OK to accept the risk, or Cancel to exit.',
+    msgAiFeatureDisabled: 'Enable AI Predict (Beta) in Settings first',
+    msgNoDataForPrediction: 'Not enough roast data for AI prediction',
+    msgAiPredictSuccess: 'AI prediction updated',
+    msgAiPredictFailed: 'AI prediction failed',
     unitSecond: 'sec'
   }
 };
@@ -1161,6 +1235,22 @@ const App: React.FC = () => {
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
   const [exportFileName, setExportFileName] = useState("");
   const [exportFormat, setExportFormat] = useState<ExportFormat>('csv');
+  const [isAiPredictionEnabled, setIsAiPredictionEnabled] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    return window.localStorage.getItem('webartisan-ai-predict-enabled') === '1';
+  });
+  const [isPredictionModalOpen, setIsPredictionModalOpen] = useState(false);
+  const [isPredicting, setIsPredicting] = useState(false);
+  const [predictionApiUrl, setPredictionApiUrl] = useState<string>(() => {
+    if (typeof window === 'undefined') return DEFAULT_AI_PREDICT_API_URL;
+    return window.localStorage.getItem('webartisan-ai-api-url') || DEFAULT_AI_PREDICT_API_URL;
+  });
+  const [predictionModel, setPredictionModel] = useState<string>(() => {
+    if (typeof window === 'undefined') return DEFAULT_AI_PREDICT_MODEL;
+    return window.localStorage.getItem('webartisan-ai-model') || DEFAULT_AI_PREDICT_MODEL;
+  });
+  const [predictionApiKey, setPredictionApiKey] = useState<string>(DEFAULT_AI_PREDICT_API_KEY);
+  const [predictionResult, setPredictionResult] = useState<RoastPredictionResult | null>(null);
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
   const [isClearModalOpen, setIsClearModalOpen] = useState(false);
   const [language, setLanguage] = useState<AppLanguage>(() => {
@@ -1184,6 +1274,21 @@ const App: React.FC = () => {
     window.localStorage.setItem('webartisan-language', language);
     document.documentElement.lang = language;
   }, [language]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem('webartisan-ai-api-url', predictionApiUrl);
+  }, [predictionApiUrl]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem('webartisan-ai-model', predictionModel);
+  }, [predictionModel]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem('webartisan-ai-predict-enabled', isAiPredictionEnabled ? '1' : '0');
+  }, [isAiPredictionEnabled]);
 
   useEffect(() => {
     const updateCompactLandscape = () => {
@@ -1503,6 +1608,55 @@ const App: React.FC = () => {
       setTimeout(() => setSuccessMsg(null), 3000);
   };
 
+  const handleToggleAiPrediction = (enabled: boolean) => {
+      if (!enabled) {
+          setIsAiPredictionEnabled(false);
+          setIsPredictionModalOpen(false);
+          return;
+      }
+
+      const confirmed = window.confirm(text.aiBetaRiskWarning);
+      if (!confirmed) return;
+
+      setIsAiPredictionEnabled(true);
+  };
+
+  const handleRunAiPrediction = async () => {
+      if (!isAiPredictionEnabled) {
+          setErrorMsg(text.msgAiFeatureDisabled);
+          setTimeout(() => setErrorMsg(null), 2500);
+          return;
+      }
+
+      if (data.length < 8) {
+          setErrorMsg(text.msgNoDataForPrediction);
+          setTimeout(() => setErrorMsg(null), 2500);
+          return;
+      }
+
+      setIsPredicting(true);
+      setErrorMsg(null);
+
+      try {
+          const result = await requestRoastPrediction({
+              apiUrl: predictionApiUrl,
+              apiKey: predictionApiKey,
+              model: predictionModel,
+              language,
+              points: data,
+              events
+          });
+          setPredictionResult(result);
+          setSuccessMsg(text.msgAiPredictSuccess);
+          setTimeout(() => setSuccessMsg(null), 2500);
+      } catch (err: any) {
+          const message = err?.message ? `: ${err.message}` : '';
+          setErrorMsg(`${text.msgAiPredictFailed}${message}`);
+      } finally {
+          setIsPredicting(false);
+      }
+  };
+
   // --- Import Logic ---
   const handleBackgroundClick = () => {
       if (backgroundInputRef.current) backgroundInputRef.current.click();
@@ -1807,6 +1961,12 @@ const App: React.FC = () => {
         : mobileTickerColumnCount === 4
           ? 'grid-cols-4'
           : 'grid-cols-5';
+  const predictionDropTempText =
+    predictionResult?.targetDropTempC !== undefined ? `${predictionResult.targetDropTempC.toFixed(1)}°C` : '--';
+  const predictionDropTimeText =
+    predictionResult?.targetDropTimeSec !== undefined ? formatTime(predictionResult.targetDropTimeSec * 1000) : '--';
+  const predictionConfidenceText =
+    predictionResult?.confidence !== undefined ? `${Math.round(predictionResult.confidence * 100)}%` : '--';
 
   // Logic for status color
   const getStatusColor = () => {
@@ -1901,6 +2061,128 @@ const App: React.FC = () => {
         </div>
       )}
 
+      {/* AI PREDICTION MODAL */}
+      {isPredictionModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+          <div className="panel-surface border rounded-lg shadow-2xl w-full max-w-2xl overflow-hidden">
+            <div className="px-4 py-3 border-b border-[#2f3944] flex justify-between items-center bg-[#252f3a]/80">
+              <span className="font-bold text-gray-200 flex items-center gap-2">
+                <Sparkles size={16} /> {text.aiPredictTitle}
+              </span>
+              <button onClick={() => setIsPredictionModalOpen(false)} className="text-gray-500 hover:text-gray-300">
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="p-4 flex flex-col gap-4">
+              <div className="text-xs text-gray-400">{text.aiPredictHint}</div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div className="md:col-span-2">
+                  <label className="block text-xs font-bold text-gray-500 uppercase mb-1">{text.aiEndpoint}</label>
+                  <input
+                    type="text"
+                    value={predictionApiUrl}
+                    onChange={(e) => setPredictionApiUrl(e.target.value)}
+                    placeholder="https://api.example.com/roast/predict"
+                    className="w-full bg-[#111823] border border-[#3e4b5a] text-white px-3 py-2 text-sm rounded focus:outline-none focus:border-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-gray-500 uppercase mb-1">{text.aiModel}</label>
+                  <input
+                    type="text"
+                    value={predictionModel}
+                    onChange={(e) => setPredictionModel(e.target.value)}
+                    placeholder="gpt-4.1-mini"
+                    className="w-full bg-[#111823] border border-[#3e4b5a] text-white px-3 py-2 text-sm rounded focus:outline-none focus:border-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-gray-500 uppercase mb-1">{text.aiApiKey}</label>
+                  <input
+                    type="password"
+                    value={predictionApiKey}
+                    onChange={(e) => setPredictionApiKey(e.target.value)}
+                    placeholder="sk-..."
+                    className="w-full bg-[#111823] border border-[#3e4b5a] text-white px-3 py-2 text-sm rounded focus:outline-none focus:border-blue-500"
+                  />
+                </div>
+              </div>
+
+              <div className="rounded border border-[#31404f] bg-[#0f151d]/65 p-3">
+                <div className="text-xs font-semibold text-[#9fb0c2] uppercase tracking-[0.1em]">
+                  {text.aiPredictionResult}
+                </div>
+
+                {!predictionResult && (
+                  <div className="text-xs text-gray-400 mt-2">{text.aiNoPredictionYet}</div>
+                )}
+
+                {predictionResult && (
+                  <div className="mt-3 flex flex-col gap-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                      <div className="rounded border border-[#31404f] bg-[#111823]/80 px-3 py-2">
+                        <div className="text-[11px] text-gray-400">{text.aiTargetDropTemp}</div>
+                        <div className="text-sm font-mono text-[#ffb86b]">{predictionDropTempText}</div>
+                      </div>
+                      <div className="rounded border border-[#31404f] bg-[#111823]/80 px-3 py-2">
+                        <div className="text-[11px] text-gray-400">{text.aiTargetDropTime}</div>
+                        <div className="text-sm font-mono text-[#58a6ff]">{predictionDropTimeText}</div>
+                      </div>
+                      <div className="rounded border border-[#31404f] bg-[#111823]/80 px-3 py-2">
+                        <div className="text-[11px] text-gray-400">{text.aiConfidence}</div>
+                        <div className="text-sm font-mono text-[#4adf8f]">{predictionConfidenceText}</div>
+                      </div>
+                    </div>
+
+                    <div>
+                      <div className="text-[11px] text-gray-400 mb-1">{text.aiReasoning}</div>
+                      <div className="text-sm text-gray-100 leading-relaxed whitespace-pre-wrap">
+                        {predictionResult.reasoning}
+                      </div>
+                    </div>
+
+                    <div>
+                      <div className="text-[11px] text-gray-400 mb-1">{text.aiRecommendations}</div>
+                      {predictionResult.recommendations.length > 0 ? (
+                        <div className="flex flex-col gap-1.5">
+                          {predictionResult.recommendations.map((item, idx) => (
+                            <div key={`${item}-${idx}`} className="text-sm text-gray-100 leading-relaxed">
+                              {idx + 1}. {item}
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="text-xs text-gray-400">{text.aiNoPredictionYet}</div>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsPredictionModalOpen(false)}
+                  className="toolbar-btn px-3 py-1.5 rounded text-sm font-bold text-gray-300"
+                >
+                  {text.cancel}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleRunAiPrediction}
+                  disabled={isPredicting}
+                  className="toolbar-btn toolbar-btn-primary px-4 py-1.5 rounded text-sm font-bold shadow-lg disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  {isPredicting ? text.aiPredicting : text.aiPredictNow}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* SETTINGS MODAL */}
       {isSettingsModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in fade-in duration-200">
@@ -1966,6 +2248,16 @@ const App: React.FC = () => {
                   type="checkbox"
                   checked={showEtRoR}
                   onChange={(e) => setShowEtRoR(e.target.checked)}
+                  className="h-4 w-4 accent-blue-500"
+                />
+              </label>
+
+              <label className="flex items-center justify-between rounded border border-[#31404f] bg-[#111823]/75 px-3 py-2 text-sm text-gray-200">
+                <span>{text.enableAiPredict}</span>
+                <input
+                  type="checkbox"
+                  checked={isAiPredictionEnabled}
+                  onChange={(e) => handleToggleAiPrediction(e.target.checked)}
                   className="h-4 w-4 accent-blue-500"
                 />
               </label>
@@ -2108,6 +2400,15 @@ const App: React.FC = () => {
 	              <span className="hidden md:inline text-xs">{text.background}</span>
 	            </button>
             <button
+              onClick={() => setIsPredictionModalOpen(true)}
+              disabled={!isAiPredictionEnabled}
+              className="toolbar-btn shrink-0 p-1.5 md:px-2 md:py-1.5 rounded flex items-center gap-1 disabled:opacity-40 disabled:cursor-not-allowed disabled:transform-none"
+              title={isAiPredictionEnabled ? text.aiPredictTitle : text.msgAiFeatureDisabled}
+            >
+              <Sparkles size={14} className="md:w-4 md:h-4" />
+              <span className="hidden md:inline text-xs">{text.aiPredict}</span>
+            </button>
+            <button
               onClick={handleOpenClearModal}
               disabled={!hasAnyClearable}
               className="toolbar-btn shrink-0 p-1.5 md:px-2 md:py-1.5 rounded flex items-center gap-1 disabled:opacity-40 disabled:cursor-not-allowed disabled:transform-none"
@@ -2204,13 +2505,21 @@ const App: React.FC = () => {
             </div>
           )}
 
-	          <div className="grid grid-cols-4 gap-1.5">
+	          <div className="grid grid-cols-5 gap-1.5">
 	            <button onClick={handleOpenExportModal} className="toolbar-btn py-1.5 rounded text-[11px] font-semibold flex items-center justify-center gap-1">
 	              <Download size={12} /> {text.export}
 	            </button>
 	            <button onClick={handleBackgroundClick} className="toolbar-btn py-1.5 rounded text-[11px] font-semibold flex items-center justify-center gap-1">
 	              <FileInput size={12} /> {text.background}
 	            </button>
+            <button
+              onClick={() => setIsPredictionModalOpen(true)}
+              disabled={!isAiPredictionEnabled}
+              className="toolbar-btn py-1.5 rounded text-[11px] font-semibold flex items-center justify-center gap-1 disabled:opacity-45 disabled:cursor-not-allowed"
+              title={isAiPredictionEnabled ? text.aiPredictTitle : text.msgAiFeatureDisabled}
+            >
+              <Sparkles size={12} /> {text.aiPredict}
+            </button>
 	            <button
 	              onClick={handleOpenClearModal}
 	              disabled={!hasAnyClearable}
