@@ -77,6 +77,10 @@ function normalizeRoR(value: number): number {
 }
 
 const ET_PRESENT_THRESHOLD = 1.0;
+const ET_SIGNAL_ON_SCORE = 3;
+const ET_SIGNAL_OFF_SCORE = -3;
+const ET_SIGNAL_SCORE_MIN = -5;
+const ET_SIGNAL_SCORE_MAX = 5;
 type AppLanguage = 'zh-CN' | 'en';
 
 function readViteEnvString(key: string): string {
@@ -1196,6 +1200,7 @@ const App: React.FC = () => {
 
   // New State: Track if we have received real data to prevent false positives on logic
   const [hasReceivedFirstData, setHasReceivedFirstData] = useState(false);
+  const [hasReliableETSignal, setHasReliableETSignal] = useState(false);
 
   // Debugging
   const [showRawLog, setShowRawLog] = useState(false);
@@ -1206,6 +1211,8 @@ const App: React.FC = () => {
   const btRef = useRef(0);
   const etRef = useRef(0);
   const swapBtEtRef = useRef(false);
+  const hasReliableETSignalRef = useRef(false);
+  const etSignalScoreRef = useRef(0);
   const dataRef = useRef<DataPoint[]>([]);
   const recentBtHistoryRef = useRef<TimeValuePoint[]>([]);
   const recentEtHistoryRef = useRef<TimeValuePoint[]>([]);
@@ -1223,7 +1230,7 @@ const App: React.FC = () => {
   // Simulation
   const [isSimulating, setIsSimulating] = useState(false);
 
-  const hasLiveET = currentET > ET_PRESENT_THRESHOLD || hasDetectedET(data);
+  const hasLiveET = hasReliableETSignal && (currentET > ET_PRESENT_THRESHOLD || hasDetectedET(data));
   const hasBackgroundET = hasDetectedET(backgroundData);
   const simulationIntervalRef = useRef<number | null>(null);
 
@@ -1313,16 +1320,43 @@ const App: React.FC = () => {
     swapBtEtRef.current = swapBtEt;
   }, [swapBtEt]);
 
-  const handleDataUpdate = useCallback((bt: number, et: number) => {
+  useEffect(() => {
+    hasReliableETSignalRef.current = hasReliableETSignal;
+  }, [hasReliableETSignal]);
+
+  const handleDataUpdate = useCallback((
+    bt: number,
+    et: number,
+    meta?: { btPresent: boolean; etPresent: boolean }
+  ) => {
+    const btPresent = meta?.btPresent ?? Number.isFinite(bt);
+    const etPresent = meta?.etPresent ?? Number.isFinite(et);
     const mappedBT = swapBtEtRef.current ? et : bt;
     const mappedET = swapBtEtRef.current ? bt : et;
+    const mappedEtPresent = swapBtEtRef.current ? btPresent : etPresent;
+
+    const nextScore = clamp(
+      etSignalScoreRef.current + (mappedEtPresent ? 1 : -1),
+      ET_SIGNAL_SCORE_MIN,
+      ET_SIGNAL_SCORE_MAX
+    );
+    etSignalScoreRef.current = nextScore;
+
+    let nextHasReliableET = hasReliableETSignalRef.current;
+    if (nextScore >= ET_SIGNAL_ON_SCORE) nextHasReliableET = true;
+    if (nextScore <= ET_SIGNAL_OFF_SCORE) nextHasReliableET = false;
+    if (nextHasReliableET !== hasReliableETSignalRef.current) {
+      hasReliableETSignalRef.current = nextHasReliableET;
+      setHasReliableETSignal(nextHasReliableET);
+    }
+
     // Update Refs for logic
     btRef.current = mappedBT;
-    etRef.current = mappedET;
+    etRef.current = nextHasReliableET ? mappedET : 0;
     lastSensorUpdateRef.current = Date.now();
     // Update State for UI
     setCurrentBT(mappedBT);
-    setCurrentET(mappedET);
+    setCurrentET(nextHasReliableET ? mappedET : 0);
     setHasReceivedFirstData(true);
   }, []);
 
@@ -1351,6 +1385,9 @@ const App: React.FC = () => {
      setCurrentETRoR(0);
      btRef.current = 0;
      etRef.current = 0;
+     etSignalScoreRef.current = 0;
+     hasReliableETSignalRef.current = false;
+     setHasReliableETSignal(false);
      recentBtHistoryRef.current = [];
      recentEtHistoryRef.current = [];
      smoothedRoRRef.current = { bt: 0, et: 0 };
@@ -1381,10 +1418,9 @@ const App: React.FC = () => {
     setRawLogs([]);
     rawLogsRef.current = [];
 
-    const defaultIp = text.connectPromptDefault;
     const input = window.prompt(
       text.connectPromptMessage,
-      defaultIp
+      ""
     );
 
     if (input === null) {
@@ -1728,13 +1764,17 @@ const App: React.FC = () => {
                    // 3. Update Display Values to end of roast
                    if (parsedData.length > 0) {
                        const last = parsedData[parsedData.length - 1];
+                       const importedHasET = hasDetectedET(parsedData);
                        setCurrentBT(last.bt);
-                       setCurrentET(last.et);
+                       setCurrentET(importedHasET ? last.et : 0);
                        setCurrentRoR(last.ror);
                        setCurrentETRoR(last.et_ror || 0);
                        smoothedRoRRef.current = { bt: last.ror, et: last.et_ror || 0 };
                        btRef.current = last.bt;
-                       etRef.current = last.et;
+                       etRef.current = importedHasET ? last.et : 0;
+                       etSignalScoreRef.current = importedHasET ? ET_SIGNAL_ON_SCORE : 0;
+                       hasReliableETSignalRef.current = importedHasET;
+                       setHasReliableETSignal(importedHasET);
                    }
                    setSuccessMsg(`${text.msgImportSuccess}${file.name}`);
               }
@@ -1829,11 +1869,17 @@ const App: React.FC = () => {
         setStatus(RoastStatus.IDLE);
         setActiveService(null);
         setDeviceName(null);
+        etSignalScoreRef.current = 0;
+        hasReliableETSignalRef.current = false;
+        setHasReliableETSignal(false);
     } else {
         setIsSimulating(true);
         setActiveService('simulation');
         setStatus(RoastStatus.CONNECTED); // Start Connected
         setDeviceName(language === 'zh-CN' ? "模拟烘焙机 (Demo)" : "Simulation Roaster (Demo)");
+        etSignalScoreRef.current = ET_SIGNAL_ON_SCORE;
+        hasReliableETSignalRef.current = true;
+        setHasReliableETSignal(true);
         
         // Init physics vars
         let simBt = 150;

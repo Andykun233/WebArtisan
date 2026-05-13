@@ -1,7 +1,7 @@
 
 export class WebSocketService {
   private ws: WebSocket | null = null;
-  private onDataCallback: ((bt: number, et: number) => void) | null = null;
+  private onDataCallback: ((bt: number, et: number, meta?: { btPresent: boolean; etPresent: boolean }) => void) | null = null;
   private onRawCallback: ((data: string) => void) | null = null;
   private onDisconnectCallback: (() => void) | null = null;
   private onErrorCallback: ((msg: string) => void) | null = null;
@@ -27,7 +27,7 @@ export class WebSocketService {
 
   connect(
       url: string,
-      onData: (bt: number, et: number) => void, 
+      onData: (bt: number, et: number, meta?: { btPresent: boolean; etPresent: boolean }) => void, 
       onDisconnect: () => void,
       onRaw?: (data: string) => void,
       onError?: (msg: string) => void
@@ -116,7 +116,10 @@ export class WebSocketService {
           if (et !== null) this.lastEt = et;
 
           if ((bt !== null || et !== null) && this.onDataCallback) {
-              this.onDataCallback(this.lastBt, this.lastEt);
+              this.onDataCallback(this.lastBt, this.lastEt, {
+                btPresent: bt !== null,
+                etPresent: et !== null
+              });
           }
 
       } catch (e) {

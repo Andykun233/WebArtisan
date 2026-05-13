@@ -45,6 +45,8 @@ const EVENT_LABEL_EN: Record<string, string> = {
   '二爆结束': 'SC End',
   '下豆': 'Drop'
 };
+const KEY_EVENT_PATTERN = /(入豆|下豆|一爆|二爆|CHARGE|DROP|FC|SC)/i;
+const PRIMARY_EVENT_PATTERN = /(入豆|下豆|一爆开始|二爆开始|CHARGE|DROP|FC\s*START|SC\s*START)/i;
 
 const formatClock = (seconds: number) => {
   const safe = Number.isFinite(seconds) ? Math.max(0, Math.round(seconds)) : 0;
@@ -52,6 +54,21 @@ const formatClock = (seconds: number) => {
   const ss = safe % 60;
   return `${mm}:${ss.toString().padStart(2, '0')}`;
 };
+
+function resolveEventPriority(label: string, isBoundary: boolean): number {
+  if (PRIMARY_EVENT_PATTERN.test(label)) return 5;
+  if (KEY_EVENT_PATTERN.test(label)) return 4;
+  if (isBoundary) return 3;
+  return 1;
+}
+
+function resolveEventColor(label: string): string {
+  if (/下豆|DROP/i.test(label)) return '#ff8f6e';
+  if (/入豆|CHARGE/i.test(label)) return '#ffd166';
+  if (/一爆|FC/i.test(label)) return '#7bd88f';
+  if (/二爆|SC/i.test(label)) return '#6ad6ff';
+  return '#9fb2c5';
+}
 
 const RoastChart: React.FC<RoastChartProps> = ({
   data,
@@ -174,16 +191,69 @@ const RoastChart: React.FC<RoastChartProps> = ({
     }
   }
 
-  // Prevent event labels from stacking when events are very close in time.
-  const labeledEventIndexes = new Set<number>();
-  let lastLabeledAt = -Infinity;
-  events.forEach((event, index) => {
-    const isBoundary = index === 0 || index === events.length - 1;
-    const isKeyMilestone = /(入豆|下豆|一爆|二爆|CHARGE|DROP|FC|SC)/i.test(event.label);
-    if (isBoundary || isKeyMilestone || event.time - lastLabeledAt >= 35) {
-      labeledEventIndexes.add(index);
-      lastLabeledAt = event.time;
+  const findNearestBtTemp = (time: number) => {
+    if (data.length === 0) return NaN;
+    let nearest = data[0];
+    let nearestDelta = Math.abs(data[0].time - time);
+    for (let i = 1; i < data.length; i++) {
+      const delta = Math.abs(data[i].time - time);
+      if (delta < nearestDelta) {
+        nearestDelta = delta;
+        nearest = data[i];
+      }
     }
+    return nearest.bt;
+  };
+
+  const eventVisuals = events.map((event, index) => {
+    const isBoundary = index === 0 || index === events.length - 1;
+    const isKey = KEY_EVENT_PATTERN.test(event.label);
+    const resolvedTemp = Number.isFinite(event.temp) && event.temp > 0 ? event.temp : findNearestBtTemp(event.time);
+    const markerTempRaw = Number.isFinite(resolvedTemp) ? resolvedTemp : currentBT;
+    const markerTemp = Math.max(tempMin + 2, Math.min(tempMax - 2, markerTempRaw));
+    return {
+      event,
+      index,
+      isBoundary,
+      isKey,
+      priority: resolveEventPriority(event.label, isBoundary),
+      markerTemp,
+      color: resolveEventColor(event.label),
+    };
+  });
+
+  // Two-lane event label layout to reduce overlap.
+  const labeledEventIndexes = new Set<number>();
+  const eventLabelLaneByIndex = new Map<number, 'top' | 'bottom'>();
+  const laneLastAt: Record<'top' | 'bottom', number> = { top: -Infinity, bottom: -Infinity };
+  const minLabelGapSeconds = compactMode ? 55 : 34;
+  const maxLabels = compactMode ? 4 : 10;
+  let labeledCount = 0;
+
+  eventVisuals.forEach((meta) => {
+    const forceLabel = meta.priority >= 4;
+    if (!forceLabel && labeledCount >= maxLabels) return;
+
+    const topGap = meta.event.time - laneLastAt.top;
+    const bottomGap = meta.event.time - laneLastAt.bottom;
+    const preferredLane: 'top' | 'bottom' = topGap >= bottomGap ? 'top' : 'bottom';
+    const secondaryLane: 'top' | 'bottom' = preferredLane === 'top' ? 'bottom' : 'top';
+    const canUsePreferred = (meta.event.time - laneLastAt[preferredLane]) >= minLabelGapSeconds;
+    const canUseSecondary = (meta.event.time - laneLastAt[secondaryLane]) >= minLabelGapSeconds;
+
+    if (!forceLabel && !canUsePreferred && !canUseSecondary) return;
+
+    const chosenLane =
+      canUsePreferred
+        ? preferredLane
+        : canUseSecondary
+          ? secondaryLane
+          : preferredLane;
+
+    labeledEventIndexes.add(meta.index);
+    eventLabelLaneByIndex.set(meta.index, chosenLane);
+    laneLastAt[chosenLane] = meta.event.time;
+    labeledCount += 1;
   });
 
   const tooltipValueFormatter = (value: number | string, name: string) => {
@@ -480,24 +550,35 @@ const RoastChart: React.FC<RoastChartProps> = ({
              />
           ))}
 
-          {/* Event Lines */}
-          {events.map((event, index) => (
-            <ReferenceLine 
-                key={`evt-${index}`} 
-                x={event.time} 
-                stroke="#738295" 
-                yAxisId="left" 
-                strokeOpacity={0.75}
-                strokeDasharray="3 3"
-                label={labeledEventIndexes.has(index) ? {
-                  value: displayEventLabel(event.label),
-                  position: 'insideTopLeft',
-                  fill: '#8ea0b3',
-                  fontSize: 10,
-                  offset: 8,
+          {/* Event Lines + Markers */}
+          {eventVisuals.map((meta) => (
+            <React.Fragment key={`evt-${meta.index}`}>
+              <ReferenceLine
+                x={meta.event.time}
+                yAxisId="left"
+                stroke={meta.color}
+                strokeOpacity={meta.isKey ? 0.72 : 0.3}
+                strokeDasharray={meta.isKey ? '3 3' : '2 6'}
+                strokeWidth={meta.isKey ? 1.1 : 1}
+                label={labeledEventIndexes.has(meta.index) ? {
+                  value: `${displayEventLabel(meta.event.label)} · ${formatClock(meta.event.time)}`,
+                  position: eventLabelLaneByIndex.get(meta.index) === 'bottom' ? 'insideBottomLeft' : 'insideTopLeft',
+                  fill: meta.color,
+                  fontSize: compactMode ? 9 : 10,
+                  offset: compactMode ? 6 : 8,
                   className: 'font-mono'
                 } : undefined}
-            />
+              />
+              <ReferenceDot
+                x={meta.event.time}
+                y={meta.markerTemp}
+                yAxisId="left"
+                r={meta.isKey ? 3 : 2.4}
+                fill={meta.color}
+                stroke="#0a1016"
+                strokeWidth={1}
+              />
+            </React.Fragment>
           ))}
 
         </LineChart>
