@@ -7,6 +7,7 @@ WebArtisan 是一个面向咖啡烘焙的实时曲线面板（前端单页应用
 - 支持导入背景曲线、实时 BT/ET/RoR 图表、事件打点、DTR（发展率）显示。
 - 对 ET 信号增加稳定性判定：仅在 ET 连续有效时才显示 ET/ET RoR，减少“仅 BT 场景”下的 ET 假波动。
 - 支持导出 `ALOG / CSV / JSON` 三种格式。
+- 已移除 AI 预测入口与相关配置项。
 - 支持界面语言切换（`简体中文 / English`），并自动本地记忆语言设置。
 - 支持 iOS/移动端的 PWA 安装与离线壳缓存（需满足 HTTPS 条件，见下文）。
 
@@ -39,28 +40,6 @@ WebArtisan 是一个面向咖啡烘焙的实时曲线面板（前端单页应用
 - 显示/隐藏 BT RoR
 - 显示/隐藏 ET RoR
 - 语言切换：`简体中文 / English`（保存在浏览器本地）
-
-### AI 烘焙预测入口
-
-- 工具栏新增 `AI预测` 按钮，可在弹窗中配置：
-  - 推理接口地址（Endpoint URL）
-  - 模型名称（Model）
-  - API Key（可选）
-- 需先在 `设置` 中开启 `启用 AI 预测（Beta）` 开关。首次开启会弹出风险确认提示。
-- 点击 `开始预测` 后，前端会将当前烘焙曲线与事件发送到你的推理接口，返回下豆建议：
-  - `targetDropTempC`（建议下豆温度）
-  - `targetDropTimeSec`（建议下豆时间）
-  - `confidence`（置信度，0~1）
-  - `reasoning`（分析说明）
-  - `recommendations`（建议列表）
-
-可通过环境变量预置默认配置：
-
-```bash
-VITE_ROAST_PREDICT_API_URL=https://your-api/predict
-VITE_ROAST_PREDICT_MODEL=gpt-4.1-mini
-VITE_ROAST_PREDICT_API_KEY=sk-...
-```
 
 ### 曲线导入与导出
 
