@@ -377,6 +377,101 @@ function hasDetectedET(points: DataPoint[]): boolean {
   return points.some((p) => Number.isFinite(p.et) && p.et > ET_PRESENT_THRESHOLD);
 }
 
+const CURRENT_ROAST_DRAFT_KEY = 'webartisan-current-roast-draft';
+const CURRENT_ROAST_DRAFT_VERSION = 1;
+const SAVED_WEBSOCKET_HOST_KEY = 'webartisan-websocket-host';
+
+type PersistedRoastDraft = {
+  version: number;
+  savedAt: number;
+  status: RoastStatus.ROASTING | RoastStatus.FINISHED;
+  startTime: number | null;
+  data: DataPoint[];
+  events: RoastEvent[];
+  currentBT: number;
+  currentET: number;
+  currentRoR: number;
+  currentETRoR: number;
+  hasReliableETSignal: boolean;
+  samplingIntervalSeconds: number;
+};
+
+function isValidDataPoint(point: any): point is DataPoint {
+  return (
+    point &&
+    Number.isFinite(point.time) &&
+    Number.isFinite(point.bt) &&
+    Number.isFinite(point.et) &&
+    Number.isFinite(point.ror)
+  );
+}
+
+function isValidRoastEvent(event: any): event is RoastEvent {
+  return (
+    event &&
+    Number.isFinite(event.time) &&
+    typeof event.label === 'string' &&
+    Number.isFinite(event.temp)
+  );
+}
+
+function loadCurrentRoastDraft(): PersistedRoastDraft | null {
+  if (typeof window === 'undefined') return null;
+
+  try {
+    const raw = window.localStorage.getItem(CURRENT_ROAST_DRAFT_KEY);
+    if (!raw) return null;
+
+    const draft = JSON.parse(raw);
+    const status = draft?.status;
+    const data = Array.isArray(draft?.data) ? draft.data.filter(isValidDataPoint) : [];
+    const events = Array.isArray(draft?.events) ? draft.events.filter(isValidRoastEvent) : [];
+    const startTime = Number.isFinite(draft?.startTime) ? Number(draft.startTime) : null;
+    const savedAt = Number.isFinite(draft?.savedAt) ? Number(draft.savedAt) : Date.now();
+    const samplingIntervalSeconds = Number.isFinite(draft?.samplingIntervalSeconds)
+      ? clamp(Number(draft.samplingIntervalSeconds), 1, 5)
+      : 3;
+
+    if (status !== RoastStatus.ROASTING && status !== RoastStatus.FINISHED) return null;
+    if (status === RoastStatus.ROASTING && startTime === null) return null;
+    if (data.length === 0 && events.length === 0) return null;
+
+    const lastPoint = data[data.length - 1];
+    const hasReliableETSignal = Boolean(draft?.hasReliableETSignal) || hasDetectedET(data);
+
+    return {
+      version: CURRENT_ROAST_DRAFT_VERSION,
+      savedAt,
+      status,
+      startTime,
+      data,
+      events,
+      currentBT: Number.isFinite(draft?.currentBT) ? Number(draft.currentBT) : (lastPoint?.bt ?? 0),
+      currentET: Number.isFinite(draft?.currentET) ? Number(draft.currentET) : (hasReliableETSignal ? (lastPoint?.et ?? 0) : 0),
+      currentRoR: Number.isFinite(draft?.currentRoR) ? Number(draft.currentRoR) : (lastPoint?.ror ?? 0),
+      currentETRoR: Number.isFinite(draft?.currentETRoR) ? Number(draft.currentETRoR) : (lastPoint?.et_ror ?? 0),
+      hasReliableETSignal,
+      samplingIntervalSeconds
+    };
+  } catch (error) {
+    window.localStorage.removeItem(CURRENT_ROAST_DRAFT_KEY);
+    return null;
+  }
+}
+
+function clearCurrentRoastDraft() {
+  if (typeof window === 'undefined') return;
+  window.localStorage.removeItem(CURRENT_ROAST_DRAFT_KEY);
+}
+
+function normalizeWebSocketHost(input: string): string {
+  return input
+    .replace(/^wss?:\/\//i, '')
+    .split('/')[0]
+    .split(':')[0]
+    .trim();
+}
+
 function isWordChar(char: string | undefined): boolean {
   return !!char && /[A-Za-z0-9_]/.test(char);
 }
@@ -1108,25 +1203,32 @@ function buildAlogExportContent(
 }
 
 const App: React.FC = () => {
-  const [status, setStatus] = useState<RoastStatus>(RoastStatus.IDLE);
-  const [data, setData] = useState<DataPoint[]>([]);
-  const [events, setEvents] = useState<RoastEvent[]>([]);
+  const [restoredRoastDraft] = useState<PersistedRoastDraft | null>(() => loadCurrentRoastDraft());
+  const restoredHasReliableET = restoredRoastDraft?.hasReliableETSignal ?? false;
+  const restoredBT = restoredRoastDraft?.currentBT ?? 0;
+  const restoredET = restoredHasReliableET ? (restoredRoastDraft?.currentET ?? 0) : 0;
+  const restoredRoR = restoredRoastDraft?.currentRoR ?? 0;
+  const restoredETRoR = restoredRoastDraft?.currentETRoR ?? 0;
+
+  const [status, setStatus] = useState<RoastStatus>(() => restoredRoastDraft?.status ?? RoastStatus.IDLE);
+  const [data, setData] = useState<DataPoint[]>(() => restoredRoastDraft?.data ?? []);
+  const [events, setEvents] = useState<RoastEvent[]>(() => restoredRoastDraft?.events ?? []);
   
   // Background Data (Reference Curve)
   const [backgroundData, setBackgroundData] = useState<DataPoint[]>([]);
   const [backgroundEvents, setBackgroundEvents] = useState<RoastEvent[]>([]);
 
-  const [startTime, setStartTime] = useState<number | null>(null);
+  const [startTime, setStartTime] = useState<number | null>(() => restoredRoastDraft?.startTime ?? null);
   
   // Instant values for display. Initialized to 0.
-  const [currentBT, setCurrentBT] = useState<number>(0);
-  const [currentET, setCurrentET] = useState<number>(0);
-  const [currentRoR, setCurrentRoR] = useState<number>(0.0);
-  const [currentETRoR, setCurrentETRoR] = useState<number>(0.0);
+  const [currentBT, setCurrentBT] = useState<number>(restoredBT);
+  const [currentET, setCurrentET] = useState<number>(restoredET);
+  const [currentRoR, setCurrentRoR] = useState<number>(restoredRoR);
+  const [currentETRoR, setCurrentETRoR] = useState<number>(restoredETRoR);
 
   // New State: Track if we have received real data to prevent false positives on logic
   const [hasReceivedFirstData, setHasReceivedFirstData] = useState(false);
-  const [hasReliableETSignal, setHasReliableETSignal] = useState(false);
+  const [hasReliableETSignal, setHasReliableETSignal] = useState(restoredHasReliableET);
 
   // Debugging
   const [showRawLog, setShowRawLog] = useState(false);
@@ -1134,15 +1236,15 @@ const App: React.FC = () => {
   const rawLogsRef = useRef<string[]>([]);
 
   // Refs for stable access inside intervals without triggering re-renders. Initialized to 0.
-  const btRef = useRef(0);
-  const etRef = useRef(0);
+  const btRef = useRef(restoredBT);
+  const etRef = useRef(restoredET);
   const swapBtEtRef = useRef(false);
-  const hasReliableETSignalRef = useRef(false);
-  const etSignalScoreRef = useRef(0);
-  const dataRef = useRef<DataPoint[]>([]);
+  const hasReliableETSignalRef = useRef(restoredHasReliableET);
+  const etSignalScoreRef = useRef(restoredHasReliableET ? ET_SIGNAL_ON_SCORE : 0);
+  const dataRef = useRef<DataPoint[]>(restoredRoastDraft?.data ?? []);
   const recentBtHistoryRef = useRef<TimeValuePoint[]>([]);
   const recentEtHistoryRef = useRef<TimeValuePoint[]>([]);
-  const smoothedRoRRef = useRef<{ bt: number; et: number }>({ bt: 0, et: 0 });
+  const smoothedRoRRef = useRef<{ bt: number; et: number }>({ bt: restoredRoR, et: restoredETRoR });
   const lastSensorUpdateRef = useRef<number>(0);
   const backgroundInputRef = useRef<HTMLInputElement>(null);
 
@@ -1176,7 +1278,7 @@ const App: React.FC = () => {
     if (saved === 'zh-CN' || saved === 'en') return saved;
     return window.navigator.language.toLowerCase().startsWith('zh') ? 'zh-CN' : 'en';
   });
-  const [samplingIntervalSeconds, setSamplingIntervalSeconds] = useState<number>(3);
+  const [samplingIntervalSeconds, setSamplingIntervalSeconds] = useState<number>(() => restoredRoastDraft?.samplingIntervalSeconds ?? 3);
   const [swapBtEt, setSwapBtEt] = useState(false);
   const [showBtRoR, setShowBtRoR] = useState(true);
   const [showEtRoR, setShowEtRoR] = useState(true);
@@ -1191,6 +1293,50 @@ const App: React.FC = () => {
     window.localStorage.setItem('webartisan-language', language);
     document.documentElement.lang = language;
   }, [language]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const shouldKeepDraft =
+      status === RoastStatus.ROASTING ||
+      status === RoastStatus.FINISHED ||
+      data.length > 0 ||
+      events.length > 0 ||
+      startTime !== null;
+
+    if (!shouldKeepDraft) {
+      clearCurrentRoastDraft();
+      return;
+    }
+
+    const draft: PersistedRoastDraft = {
+      version: CURRENT_ROAST_DRAFT_VERSION,
+      savedAt: Date.now(),
+      status: status === RoastStatus.ROASTING ? RoastStatus.ROASTING : RoastStatus.FINISHED,
+      startTime,
+      data,
+      events,
+      currentBT,
+      currentET,
+      currentRoR,
+      currentETRoR,
+      hasReliableETSignal,
+      samplingIntervalSeconds
+    };
+
+    window.localStorage.setItem(CURRENT_ROAST_DRAFT_KEY, JSON.stringify(draft));
+  }, [
+    status,
+    data,
+    events,
+    startTime,
+    currentBT,
+    currentET,
+    currentRoR,
+    currentETRoR,
+    hasReliableETSignal,
+    samplingIntervalSeconds
+  ]);
 
   useEffect(() => {
     const updateCompactLandscape = () => {
@@ -1266,7 +1412,7 @@ const App: React.FC = () => {
   }, []);
 
   const handleDisconnect = useCallback(() => {
-     setStatus(RoastStatus.IDLE);
+     setStatus(prev => prev === RoastStatus.ROASTING ? RoastStatus.ROASTING : RoastStatus.IDLE);
      setIsSimulating(false);
      setDeviceName(null);
      setActiveService(null);
@@ -1313,51 +1459,63 @@ const App: React.FC = () => {
     setRawLogs([]);
     rawLogsRef.current = [];
 
-    const input = window.prompt(
-      text.connectPromptMessage,
-      ""
-    );
+    const connectToHost = async (host: string) => {
+      const url = `ws://${host}:80/ws`;
+      const name = await websocketService.connect(
+          url,
+          handleDataUpdate,
+          handleDisconnect,
+          handleRawData,
+          (msg) => setErrorMsg(msg)
+      );
+      window.localStorage.setItem(SAVED_WEBSOCKET_HOST_KEY, host);
+      setDeviceName(name);
+      setActiveService('websocket');
+      setStatus(prev => prev === RoastStatus.ROASTING ? RoastStatus.ROASTING : RoastStatus.CONNECTED);
+    };
 
-    if (input === null) {
-        setIsConnecting(false);
-        return;
+    const promptForHost = () => {
+      const savedHost = window.localStorage.getItem(SAVED_WEBSOCKET_HOST_KEY) || "";
+      const input = window.prompt(text.connectPromptMessage, savedHost);
+      if (input === null) return null;
+
+      const normalizedHost = normalizeWebSocketHost(input);
+      if (!normalizedHost) return "";
+      return normalizedHost;
+    };
+
+    const savedHost = window.localStorage.getItem(SAVED_WEBSOCKET_HOST_KEY);
+    const initialHost = savedHost ? normalizeWebSocketHost(savedHost) : promptForHost();
+
+    if (initialHost === null) {
+      setIsConnecting(false);
+      return;
     }
 
-    const raw = input.trim();
-    if (!raw) {
-        setErrorMsg(text.msgEnterIp);
-        setIsConnecting(false);
-        return;
-    }
-
-    // Allow pasting ws://... and normalize to fixed ws://<host>:80/ws
-    const normalizedHost = raw
-      .replace(/^wss?:\/\//i, '')
-      .split('/')[0]
-      .split(':')[0]
-      .trim();
-
-    if (!normalizedHost) {
+    if (!initialHost) {
         setErrorMsg(text.msgInvalidIp);
         setIsConnecting(false);
         return;
     }
 
-    const url = `ws://${normalizedHost}:80/ws`;
-
     try {
         setErrorMsg(null);
-        const name = await websocketService.connect(
-            url, 
-            handleDataUpdate, 
-            handleDisconnect, 
-            handleRawData,
-            (msg) => setErrorMsg(msg)
-        );
-        setDeviceName(name);
-        setActiveService('websocket');
-        setStatus(RoastStatus.CONNECTED); 
+        await connectToHost(initialHost);
     } catch (err: any) {
+        if (savedHost) {
+          window.localStorage.removeItem(SAVED_WEBSOCKET_HOST_KEY);
+          const fallbackHost = promptForHost();
+          if (fallbackHost) {
+            try {
+              setErrorMsg(null);
+              await connectToHost(fallbackHost);
+              return;
+            } catch (fallbackErr: any) {
+              setErrorMsg(fallbackErr.message || text.msgWsConnectFailed);
+              return;
+            }
+          }
+        }
         setErrorMsg(err.message || text.msgWsConnectFailed);
     } finally {
         setIsConnecting(false);
@@ -1428,6 +1586,8 @@ const App: React.FC = () => {
   };
 
   const handleReset = async () => {
+    clearCurrentRoastDraft();
+
     // Clear any pending undo
     setShowUndoDrop(false);
     if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
